@@ -34,13 +34,49 @@ pub fn ensure(socket: &str) -> Res<String> {
 }
 /// A project gets its coordinator as soon as its space is selected, even before the first task.
 /// Other sessions stay alive; unopened projects do not launch dozens of CLIs in the background.
+/// Coordinators of projects that have not been focused for a while are stopped: their pane stays, the CLI inside it
+/// does not run idle. The pane is reopened when the project is selected again.
 pub fn ensure_visible(socket: &str) -> Res<()> {
     let visible = selected_folder(socket)
         .and_then(|folder| crate::mission_layout::project_workspace(socket, &folder.display().to_string()))
         .and_then(|id| Herdr::new(Some(socket.into())).workspace_get(&id))
         .map(|space| space.b("focused")).unwrap_or(false);
     if visible || has_session(socket) { ensure(socket)?; }
+    // Stop coordinators of projects that are not the current one and have no active tasks.
+    stop_idle_coordinators(socket)?;
     Ok(())
+}
+
+/// Coordinators of projects that have not been focused for a while and have no working tasks are stopped.
+/// The pane stays open for the task composer; only the CLI inside it is stopped.
+fn stop_idle_coordinators(socket: &str) -> Res<()> {
+    let _api = Herdr::new(Some(socket.into()));
+    let current = selected_folder(socket);
+    let all = crate::coordinator::state::all(socket);
+    for co in all {
+        let Some(c) = state::get(&co) else { continue };
+        if c.b("stopped") || c.b("want") || state::pumping(&c) { continue; }
+        // The currently selected project is never stopped here.
+        if current.as_ref().and_then(|f| project_coordinator(f, socket).ok()).as_ref() == Some(&co) { continue; }
+        // A project with a task that is still working: the coordinator stays.
+        if has_working_task(&co, socket) { continue; }
+        // Stop the coordinator; its pane stays open. The next message or selection restarts it.
+        requests::stop(&co)?;
+    }
+    Ok(())
+}
+
+/// Does this project's coordinator have any task that is still working?
+fn has_working_task(co: &Co, socket: &str) -> bool {
+    let repo = co.repo();
+    crate::store::tasks::list(crate::store::tasks::ListOpts { include_archived: false, attempts: true, ..Default::default() })
+        .into_iter()
+        .any(|t| {
+            if t.b("archivedAt") { return false; }
+            if let Some(r) = &repo { if t.s("id").split('/').next().unwrap_or("") != *r { return false; } }
+            if t.at("link").s("socket") != socket { return false; }
+            ["starting", "setup", "working", "checking", "pushing", "reviewing", "merging"].contains(&t.s("stage"))
+        })
 }
 pub fn has_session(socket: &str) -> bool {
     selected_folder(socket).and_then(|folder| project_coordinator(&folder, socket).ok())

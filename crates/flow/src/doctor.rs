@@ -11,6 +11,7 @@ pub mod plugin;
 pub mod program;
 pub mod settings;
 pub mod stale;
+pub mod terminals;
 
 /// One thing the check found.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +55,7 @@ pub fn doctor_main() -> i32 {
         let far = s.spawn(machines::ask);
         let disks = s.spawn(disk::ask);
         let left = s.spawn(|| stale::ask(&stale::cache_dir()));
+        let terms = s.spawn(terminals::ask);
         let herdr = herdr.join().unwrap_or_default();
         let here = program::here(launcher, launcher_text, plugin::root_of(&herdr));
         let mut all = program::check(&here);
@@ -64,6 +66,7 @@ pub fn doctor_main() -> i32 {
         all.extend(machines::check(far.join().unwrap_or_default().as_ref()));
         all.extend(disk::check(&disks.join().unwrap_or_default()));
         all.extend(stale::check(&left.join().unwrap_or_default()));
+        all.extend(terminals::check(&terms.join().unwrap_or_default()));
         all
     });
     let all: Vec<Found> = all.into_iter().chain(old).collect();

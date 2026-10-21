@@ -138,6 +138,7 @@ mod doctor;
 mod doctor_leftovers;
 mod doctor_settings;
 mod end_to_end;
+mod doctor_terminals;
 mod endings;
 mod fallback;
 mod fallback_more;
