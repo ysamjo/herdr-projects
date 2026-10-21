@@ -1,4 +1,4 @@
-//! Coordinator provider handover on the global CLI order, preserving failed terminals and a readable context file.
+//! Coordinator provider handover on the global CLI order, keeping the old context in a readable file.
 use crate::coordinator::{co::Co, requests, state, who};
 use crate::err::Res;
 use crate::herdr::Herdr;
@@ -20,8 +20,9 @@ pub fn tick(socket: &str) -> Res<()> {
 }
 pub fn tick_one(co: &Co) -> Res<()> {
     let c = state::get(co).unwrap_or_default();
-    if state::pumping(&c) || c.b("want") || !c.b("run") { return Ok(()) }
+    if c.b("stopped") || state::pumping(&c) || c.b("want") || !c.b("run") { return Ok(()) }
     let api = Herdr::new(Some(co.socket.clone()));
+    if api.pane_get(c.s("pane")).is_none() { return Ok(()) }
     let agent = api.agent_get(c.s("pane")).ok().flatten();
     let explicit = regex::Regex::new(r"(?im)^\s*(?:[✗×!⚠⏺●]\s*)?(?:api error:|error:|usage limit reached|quota exceeded|individual quota reached|rate limit exceeded|you.ve hit your (?:usage )?limit|http (?:429|529|401|403))").unwrap();
     let turn = crate::finish::turn_ended::screen_error(&api, c.s("pane"), agent.as_ref()).filter(|t| explicit.is_match(&t.error));
@@ -35,6 +36,7 @@ pub fn tick_one(co: &Co) -> Res<()> {
     let Some(next) = next else { return Ok(()) };
     let file = state::dir_of(co).join(format!("handover-{}.json", crate::clock::now()));
     write_json(&file, &Value::Object(c.clone()))?;
+    crate::store::files::write_atomic(&file.with_extension("terminal.txt"), crate::herdr::api::read_screen(&api, c.s("pane")).as_bytes())?;
     state::change(co, |s| { s.put("controlPriority", crate::mission_control::priority()); s.put("controlFallback", next.clone()); s.put("controlHandover", format!("{on} → {next}: {error}")); true })?;
     requests::handover(who::pick_of(next, "")?, co)?;
     let last = c.arr("where").last();
@@ -42,6 +44,6 @@ pub fn tick_one(co: &Co) -> Res<()> {
         .or_else(|| co.root()).unwrap_or_else(crate::store::files::user_home);
     let scope = last.and_then(|m| m.s("said").lines().next()).filter(|s| s.starts_with("[MISSION-CONTROL-")).map(|s| format!("{s}\n")).unwrap_or_default();
     let pending = last.map(|m| format!("\nZuletzt übergebene Nachricht für {} (bei dieser Fehlermeldung unbeantwortet):\n{}", m.s("root"), m.s("said"))).unwrap_or_default();
-    requests::send(&folder, &format!("{scope}Orchestrator-Providerwechsel von {on} zu {next}. Ursache: {error}. Der bisherige Terminal-Pane bleibt zur Einsicht offen. Die vollständige Vorgeschichte liegt in {}. Lies sie und `board list`, bevor du weiterarbeitest. Setze offene Aufträge und offene ORCHESTRATOR-REVIEW-Anfragen fort; lege bereits existierende Teilaufgaben nicht erneut an. Berichte dem Menschen den Wechsel.{pending}", file.display()), false, "", co)?;
+    requests::send(&folder, &format!("{scope}Orchestrator-Providerwechsel von {on} zu {next}. Ursache: {error}. Die vollständige Vorgeschichte liegt in {}. Lies sie und `board list`, bevor du weiterarbeitest. Setze offene Aufträge und offene ORCHESTRATOR-REVIEW-Anfragen fort; lege bereits existierende Teilaufgaben nicht erneut an. Berichte dem Menschen den Wechsel.{pending}", file.display()), false, "", co)?;
     Ok(())
 }

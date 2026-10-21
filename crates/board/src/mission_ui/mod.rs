@@ -4,6 +4,7 @@ pub mod events;
 pub mod controls;
 pub mod conclusion;
 pub mod worker;
+pub mod attachments;
 use crate::board::textbox::TextBox;
 use crate::json::*;
 use crate::mission_projects::Project;
@@ -15,7 +16,7 @@ use std::time::{Duration, Instant};
 
 pub struct State {
     pub projects: Vec<Project>, pub project: ListState,
-    pub draft: TextBox, pub order: TextBox, pub priority: bool, pub sidebar: bool, pub sending: bool,
+    pub draft: TextBox, pub order: TextBox, pub priority: bool, pub sidebar: bool, pub sending: bool, pub attaching: bool,
     pub notice: String, pub error: String, pub coordinator: Value, pub drafts: HashMap<String, String>,
     pub folders_rect: Rect, pub input_rect: Rect, pub send_rect: Rect, pub priority_rect: Rect, pub refresh_rect: Rect,
     pub conclusion: Value, pub expanded: bool, pub summary_scroll: u16, pub controls: Vec<(Rect, controls::Action)>,
@@ -42,7 +43,7 @@ impl State {
         }
     }
     pub fn send(&mut self) {
-        if self.sending || self.draft.is_empty() { return; }
+        if self.sending || self.attaching || self.draft.is_empty() { return; }
         if let Some(p) = self.folder() {
             let folder = p.path.clone(); let text = self.draft.text();
             self.save_draft(); self.sending = true; self.notice = "Task wird an den Orchestrator übergeben …".into(); self.error.clear();
@@ -71,7 +72,7 @@ pub fn open() -> crate::err::Res<i32> {
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let mut s = State {
         projects: vec![], project: ListState::default(), draft: TextBox::default(), order: TextBox::default(),
-        priority: false, sidebar: true, sending: false, notice: "Projektordner werden geladen …".into(), error: String::new(), coordinator: Value::Null, drafts,
+        priority: false, sidebar: true, sending: false, attaching: false, notice: "Projektordner werden geladen …".into(), error: String::new(), coordinator: Value::Null, drafts,
         folders_rect: Rect::default(), input_rect: Rect::default(), send_rect: Rect::default(), priority_rect: Rect::default(), refresh_rect: Rect::default(),
         conclusion: Value::Null, expanded: false, summary_scroll: 0, controls: vec![],
         socket, tx, closed_at: None,

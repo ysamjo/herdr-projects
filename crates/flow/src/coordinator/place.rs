@@ -90,6 +90,7 @@ pub fn open_tab(api: &Herdr, co: &Co, env: &[(String, String)]) -> Res<Value> {
     change(co, |c| {
         let sp = if old.is_some() { c.at("space").clone() } else { json!(space) };
         put(c, co, sp, &pane, Value::Null);
+        if mission_project { c.put("tiled", true); }
         if let Some(o) = &old { c.put("workspace", o.clone()); } // moved over by whoever looks next (move_over)
         if !c.b("run") && pane.b("agent") { c.put("run", json!({ "kind": pane.at("agent") })); } // found running
         true

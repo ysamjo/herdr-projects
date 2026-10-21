@@ -110,8 +110,25 @@ pub fn auto(socket: &str, folder: &Path) -> Res<()> {
 pub fn command(action: &str) -> Res<()> {
     let socket = crate::herdr::cli::current_socket();
     let folder = crate::mission_control::selected_folder(&socket).ok_or_else(|| crate::err::Error::new("Bitte einen Projekt-Space auswählen."))?;
+    if action == "orchestrator" && reopen(&socket, &folder)? { return Ok(()); }
     match action {
         "mobile" => mobile(&socket, &folder, true), "tiles" => mobile(&socket, &folder, false),
         target => focus(&socket, &folder, target),
     }
+}
+
+/// Only an explicit open action or a new task reopens a coordinator the human closed.
+pub fn reopen(socket: &str, folder: &Path) -> Res<bool> {
+    let co = crate::mission_control::project_coordinator(folder, socket)?;
+    let c = state::get(&co).unwrap_or_default();
+    if c.b("stopped") || (c.b("pane") && Herdr::new(Some(socket.into())).pane_get(c.s("pane")).is_none()) {
+        if !state::pumping(&c) && !c.b("want") {
+            let desired = crate::mission_fallback::target_for(&co);
+            if c.o("run").zip(desired.as_ref()).map(|(run, pick)| crate::coordinator::who::same_choice(run, pick)).unwrap_or(false) {
+                crate::coordinator::requests::restart(&co)?;
+            } else { crate::coordinator::requests::fresh(desired, &co)?; }
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }

@@ -6,6 +6,8 @@
 - Agentenliste muss mit den unterstützten Einträgen in Herdr Projects synchron bleiben: Freebuff, CodeBuddy, Claude Code, Codex, Antigravity (`agy`), Cursor, OpenCode, Kiro, Cline, Qoder CLI (`qodercli`) und Grok.
 - Keine Ordnerauswahl-Liste in Mission Control hinzufügen; Herdr-Spaces sind die Projektauswahl. Keine ACP- oder Headless-Steuerung hinzufügen. Keine Agenten in zusätzlichen Tabs starten.
 - Nach Funktionsänderungen README und diese Datei aktuell halten.
+- `mission_control::ensure` respektiert manuell geschlossene Orchestrator-Panes (`stopped`); nur explizites Öffnen oder ein neuer Auftrag startet sie erneut. Projekt-Neustarts und Providerwechsel schließen in `coordinator/pump.rs` ausschließlich das alte Orchestrator-Pane, niemals dessen gemeinsamen Tab. Projekt-Orchestratoren tragen `tiled=true`.
+- `mission_ui/attachments.rs`: „Bild einfügen“ liest auf ausdrücklichen Klick die Mac-Zwischenablage über AppKit, speichert PNGs bis 20 MB privat unter dem Projekt-Coordinator außerhalb des Repositories und hängt den Pfad an den Taskentwurf. Kein automatisches Auslesen, kein sofortiges Absenden, keine ACP-/Headless-Bildübertragung.
 
 - Eingabe unten: `mission_view.rs` teilt den ersten Coordinator-Pane nach unten und tauscht die Positionen. Die Eingabe behält etwa sieben Zeilen. Vorhandene Seitenlayouts werden bei ruhendem Eingabeprozess über einen vorübergehenden Space migriert; laufende Agenten bleiben erhalten.
 - Fokusmodus verwendet Herdrs Pane-Zoom; `control-input`, `control-orchestrator`, `control-next`, `control-mobile` und `control-tiles` öffnen vorhandene Panes. Keine zusätzlichen Tabs, Headless-Ansichten oder Terminal-Kopien.

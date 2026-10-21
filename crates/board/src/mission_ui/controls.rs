@@ -4,9 +4,18 @@ use crate::json::*;
 use ratatui::{Frame, layout::Rect, style::{Color, Style}, widgets::Paragraph};
 
 #[derive(Clone)]
-pub enum Action { Send, Priority, Conclusion, Approve(String), RequestConclusion(String), Focus(String), Mobile(bool), Expand }
+pub enum Action { Send, Image, Priority, Conclusion, Approve(String), RequestConclusion(String), Focus(String), Mobile(bool), Expand }
 pub fn act(s: &mut State, action: Action) {
     match action {
+        Action::Image => {
+            if s.attaching || s.sending { return; }
+            if let Some(folder) = s.folder() {
+                let folder = folder.path.clone();
+                s.attaching = true;
+                let _ = s.tx.send(Command::Image(folder));
+                s.notice = "Bild aus der Mac-Zwischenablage wird angehängt …".into();
+            }
+        }
         Action::Send => { if s.priority { let _ = s.tx.send(Command::Priority(s.order.text())); } else { s.send(); } },
         Action::Priority => {
             s.priority = !s.priority;
@@ -51,6 +60,7 @@ pub fn navigation(s: &State) -> Vec<(String, Action)> {
 }
 pub fn actions(s: &State) -> Vec<(String, Action)> {
     let mut choices = vec![(if s.sending { "Sendet …" } else { "Senden" }.into(), Action::Send)];
+    choices.push((if s.attaching { "Bild lädt …" } else { "Bild einfügen" }.into(), Action::Image));
     if s.conclusion.b("pending") && s.conclusion.b("ready") {
         choices.push(("Umsetzung freigeben".into(), Action::Approve(s.conclusion.t("task"))));
     }

@@ -149,8 +149,14 @@ fn run_pump(co: &Co, taken: &mut HashSet<String>) -> Res<()> {
         if let Some(w) = c.o("want").cloned() {
             taken.insert(w.t("at"));
             // Its conversation is known before its terminal goes: a restart reopens it.
-            let keep_project_pane = co.repo().is_some() && crate::mission_control::is_active(&co.socket) && ["new", "handover"].contains(&w.s("what"));
-            if !["open", "handover"].contains(&w.s("what")) && !keep_project_pane { if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); } close_place(&api, &c); }
+            let mission_project = co.repo().is_some() && crate::mission_control::is_active(&co.socket);
+            if mission_project && ["new", "handover", "restart", "stop"].contains(&w.s("what")) {
+                if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); }
+                // The tab also contains the task composer and workers; replace only this coordinator.
+                if c.b("pane") { api.pane_close(c.s("pane")); }
+            } else if !["open", "handover"].contains(&w.s("what")) {
+                if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); } close_place(&api, &c);
+            }
             let _ = change(co, |c| {
                 if c.at("want").at("at") == w.at("at") { c.put("want", Value::Null); }
                 if w.s("what") == "open" { return true; }

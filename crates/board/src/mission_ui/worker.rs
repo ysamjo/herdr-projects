@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, RecvTimeoutError};
 use std::time::Duration;
 
-pub enum Command { Refresh, Submit(PathBuf, String), Priority(String), Approve(PathBuf, String), Conclusion(String), Focus(String), Mobile(bool), Fold }
-pub enum Update { Notice(String), Folders(Vec<Project>), Snapshot(Value, Value), Approved(String), Sent(PathBuf, String), Applied(String), Error(String) }
+pub enum Command { Refresh, Image(PathBuf), Submit(PathBuf, String), Priority(String), Approve(PathBuf, String), Conclusion(String), Focus(String), Mobile(bool), Fold }
+pub enum Update { Notice(String), Image(PathBuf, PathBuf), Folders(Vec<Project>), Snapshot(Value, Value), Approved(String), Sent(PathBuf, String), Applied(String), Error(String) }
 pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update>) {
     std::thread::spawn(move || {
         crate::flow::send::shim();
@@ -17,6 +17,10 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
         loop {
             match commands.recv_timeout(Duration::from_millis(1000)) {
                 Ok(Command::Refresh) => refresh(&updates),
+                Ok(Command::Image(folder)) => match super::attachments::clipboard(&folder, &socket) {
+                    Ok(path) => { let _ = updates.send(Update::Image(folder, path)); }
+                    Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
+                },
                 Ok(Command::Submit(folder, text)) => match crate::mission_control::submit(&folder, &text, &socket) {
                     Ok(()) => { let _ = updates.send(Update::Sent(folder, text)); }
                     Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
@@ -33,7 +37,12 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
                         }
                     }
                 },
-                Ok(Command::Focus(target)) => view(&socket, &updates, |folder| crate::mission_view::focus(&socket, folder, &target)),
+                Ok(Command::Focus(target)) => view(&socket, &updates, |folder| {
+                    if target == "orchestrator" && crate::mission_view::reopen(&socket, folder)? {
+                        let _ = updates.send(Update::Notice("Orchestrator wird geöffnet …".into())); return Ok(());
+                    }
+                    crate::mission_view::focus(&socket, folder, &target)
+                }),
                 Ok(Command::Mobile(enabled)) => view(&socket, &updates, |folder| crate::mission_view::mobile(&socket, folder, enabled)),
                 Ok(Command::Fold) => view(&socket, &updates, |folder| {
                     if crate::mission_view::preferences(&socket, folder).b("mobile") { crate::mission_view::focus(&socket, folder, "orchestrator") }
@@ -82,6 +91,7 @@ fn refresh(updates: &Sender<Update>) {
 }
 pub fn receive(s: &mut State, update: Update) {
     match update {
+        Update::Image(folder, path) => { s.attaching = false; super::attachments::insert(s, folder, path); }
         Update::Notice(notice) => { s.notice = notice; s.error.clear(); }
         Update::Folders(folders) => {
             let wanted = s.folder().map(|p| p.path.display().to_string()).unwrap_or_else(|| crate::mission_layout::state(&s.socket).t("selected"));
@@ -104,6 +114,6 @@ pub fn receive(s: &mut State, update: Update) {
             s.notice = format!("Task für {} an den Orchestrator übergeben", folder.file_name().unwrap_or_default().to_string_lossy());
         }
         Update::Applied(primary) => { s.priority = false; s.error.clear(); s.notice = format!("Reihenfolge gespeichert und angewendet · Orchestrator: {primary}"); }
-        Update::Error(error) => { s.sending = false; s.error = error; }
+        Update::Error(error) => { s.sending = false; s.attaching = false; s.error = error; }
     }
 }

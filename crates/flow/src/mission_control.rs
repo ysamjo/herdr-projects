@@ -51,6 +51,11 @@ pub fn ensure(socket: &str) -> Res<String> {
     let desired = crate::mission_fallback::target_for(&co).ok_or_else(|| crate::err::Error::new("Kein Orchestrator konfiguriert."))?;
     let api = Herdr::new(Some(socket.into()));
     let old = state::get(&co).unwrap_or_default();
+    if old.b("stopped") { return Ok("Orchestrator geschlossen · über Orchestrator oder einen neuen Task öffnen".into()); }
+    if old.b("pane") && api.pane_get(old.s("pane")).is_none() && !state::pumping(&old) && !old.b("want") {
+        state::change(&co, |c| { c.put("stopped", true); true })?;
+        return Ok("Orchestrator wurde geschlossen".into());
+    }
     let live = api.agent_get(old.s("pane")).ok().flatten();
     if old.o("run").map(|r| !who::same_choice(r, &desired)).unwrap_or(false) {
         if live.as_ref().map(|a| !["idle", "done"].contains(&a.s("agent_status"))).unwrap_or(false) {
@@ -148,7 +153,10 @@ pub fn submit_report(folder: &Path, text: &str, socket: &str, report_id: Option<
     if !folder.is_dir() { crate::fail!("Der Projektordner ist nicht mehr vorhanden: {}", folder.display()) }
     let co = project_coordinator(&folder, socket)?;
     let actual = state::get(&co).unwrap_or_default();
-    if let (Some(run), Some(desired)) = (actual.o("run"), crate::mission_fallback::target_for(&co)) {
+    let closed = actual.b("stopped") || (actual.b("pane") && Herdr::new(Some(socket.into())).pane_get(actual.s("pane")).is_none());
+    if closed {
+        crate::mission_view::reopen(socket, folder)?;
+    } else if let (Some(run), Some(desired)) = (actual.o("run"), crate::mission_fallback::target_for(&co)) {
         if !who::same_choice(run, &desired) { crate::fail!("Der Wechsel zur gewählten CLI ist noch offen. Der Task bleibt im Eingabefeld.") }
     }
     let folder = std::fs::canonicalize(folder)?;

@@ -109,7 +109,7 @@ fn changing_priority_replaces_an_idle_coordinator_without_closing_mission_contro
 }
 
 #[test]
-fn coordinator_quota_handover_keeps_the_error_terminal_visible_and_follows_the_order() {
+fn coordinator_quota_handover_replaces_the_error_terminal_and_follows_the_order() {
     let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();
     let old = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
@@ -118,7 +118,7 @@ fn coordinator_quota_handover_keeps_the_error_terminal_visible_and_follows_the_o
     let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
     assert_eq!(c.at("run").s("kind"), "codex");
     assert_ne!(c.s("pane"), old);
-    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_some());
+    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_none());
     assert_eq!(sw::mission_fallback::target_for(&coordinator(&w)).unwrap().s("kind"), "codex");
     assert!(prompts(&w, c.s("pane")).last().unwrap().contains("Providerwechsel"));
     assert_eq!(w.state().arr("tabs").len(), 1);
@@ -188,7 +188,7 @@ fn mission_control_only_draws_projects_and_input_with_tasks_in_the_native_sideba
     let (tx, _) = std::sync::mpsc::channel();
     let mut s = State {
         projects: vec![sw::mission_projects::Project {name: "proj".into(), path: w.root.clone(), remote: String::new()}],
-        project: Default::default(), draft: Default::default(), order: Default::default(), priority: false, sidebar: false, sending: false,
+        project: Default::default(), draft: Default::default(), order: Default::default(), priority: false, sidebar: false, sending: false, attaching: false,
         notice: String::new(), error: String::new(), coordinator: json!({"agent":"agy"}), drafts: Default::default(),
         folders_rect: Default::default(), input_rect: Default::default(), send_rect: Default::default(), priority_rect: Default::default(), refresh_rect: Default::default(),
         conclusion: serde_json::Value::Null, expanded: false, summary_scroll: 0, controls: vec![],
@@ -218,7 +218,7 @@ fn antigravity_individual_quota_marker_starts_the_next_coordinator_and_keeps_pro
     let messages = prompts(&w, c.s("pane"));
     assert!(messages.last().unwrap().contains(&w.root_str()));
     assert!(messages.last().unwrap().contains("Ist die Startseite umgestellt?"));
-    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_some());
+    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_none());
 }
 
 #[test]

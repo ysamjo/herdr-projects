@@ -8,9 +8,13 @@ Dauerhaft geöffnete Projektansicht für Herdr: für jeden direkten Unterordner 
 2. Im eigenen Taskfeld den Auftrag eingeben und **Task senden** wählen.
 3. Der Orchestrator teilt die Arbeit auf, öffnet Worker-Panes im selben Space und prüft ihre Ergebnisse in seiner laufenden Sitzung. Fortschritt, Fehler und Rückfragen bleiben sichtbar. Offene Agenten-Tasks stehen in Herdrs Agentenliste ganz links mit Task-ID, Titel und Status; ein Klick fokussiert das Terminal.
 
+**Bilder anhängen:** Auf dem Mac ein Bild kopieren (Screenshot in die Zwischenablage: `Ctrl+Shift+Cmd+4`), im Taskfeld **Bild einfügen** anklicken und den Auftrag senden. Control speichert das Bild als private PNG-Datei außerhalb des Repositories und fügt den Dateipfad in den Entwurf ein. Der Orchestrator erhält die Anweisung, diese Datei zu lesen; seine CLI und das gewählte Modell müssen Bilder unterstützen. Bis zu 20 MB pro Bild. Ein Bild wird erst beim Senden übergeben. Die Schaltfläche liest die Zwischenablage des Macs, nicht die eines per Moshi verbundenen Handys. Normales Einfügen von Text bleibt unverändert.
+
 **CLI-Reihenfolge** legt eine globale Reihenfolge für Orchestrator und Worker fest. Die erste CLI orchestriert und reviewed. Umsetzungen übernehmen Worker mit der nächsten verfügbaren anderen CLI; die laufende Orchestrator-CLI ist auch bei Worker-Fallbacks ausgeschlossen. Mindestens zwei unterschiedliche CLIs sind erforderlich. Unterstützt: Freebuff (`freebuff`), CodeBuddy (`codebuddy`), Claude Code (`claude`), Codex (`codex`), Antigravity (`agy`), Cursor (`cursor`), OpenCode (`opencode`), Kiro (`kiro`), Cline (`cline`), Qoder (`qodercli`) und Grok (`grok`). Modelle sind optional als `cli/modell` möglich. Antigravity kann auch als `antigravity-cli` oder `antigravity` eingegeben werden.
 
 Das Plugin legt beim Öffnen für jeden direkten Projektordner unter `~/Developer` einen Space mit Taskfeld an. `herdr-control.open` und `herdr-projects.open` öffnen beziehungsweise fokussieren diese Spaces; Herdrs Space-Leiste wechselt zwischen Projekten. Der Orchestrator startet automatisch beim Auswählen seines Projekt-Spaces, auch ohne ersten Task. Worker starten erst bei delegierten Aufgaben. Alle Sitzungen bleiben beim Wechsel erhalten. Ein Prioritätswechsel wartet einen laufenden Orchestrator-Turn ab.
+
+Ein manuell geschlossenes Orchestrator-Pane bleibt geschlossen. Erst **Orchestrator** oder ein neuer Auftrag öffnet es wieder. Beim Modell- oder Providerwechsel ersetzt Control ausschließlich das bisherige Orchestrator-Pane; Taskfeld und Worker bleiben bestehen. Pro Projekt wird ein Orchestrator geführt.
 
 ## Handy und Terminal-Navigation
 
