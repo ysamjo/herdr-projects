@@ -102,7 +102,20 @@ pub fn command(cmd: &str, a: &Args) -> Res<(Value, String)> {
         "stop" => { let t = talk::stop(&need(1, "an id")?)?; (shown_of(t.s("id")), format!("{}: stopped", t.s("id"))) }
         "start" => { let t = filing::start_human(&need(1, "an id")?)?; (shown_of(t.s("id")), format!("{}: in progress", t.s("id"))) }
         "pick" => said(crate::attempts::settle::pick(&need(1, "an id")?, &pos.get(2).cloned().unwrap_or_default())?),
-        "approve" => said(finish_line::approve(&need(1, "an id")?, None, flags.at("anyway") == &json!(true))?),
+        "approve" => {
+            let id = need(1, "an id")?;
+            let anyway = flags.at("anyway") == &json!(true);
+            // The yes is the human's. A task's agent or reviewer pane cannot give it, for its own work or another's;
+            // the board and a remote board do not take this path, and the marker can be forged: a speed bump, not
+            // isolation (docs/gate.md, "What the review is not").
+            if let Some((owner, role)) = caller() {
+                let least = if anyway { ", and --anyway least of all" } else { "" };
+                crate::fail!("{id}: not approved: this command ran in the {role} pane of {}. An agent does not approve work{least}; you do: in Mission Control, on the board, or from a terminal of your own. Nothing was merged.", owner.s("id"));
+            }
+            use std::io::IsTerminal;
+            let via = if std::io::stdin().is_terminal() { "terminal" } else { "session" };
+            said(finish_line::approve_from(&id, None, anyway, via)?)
+        }
         "review" => said(finish_line::send_review(&need(1, "an id")?)?),
         "retry" => said(finish_line::send_error(&need(1, "an id")?)?),
         "fix" => said(finish_line::send_failure(&need(1, "an id")?)?),
