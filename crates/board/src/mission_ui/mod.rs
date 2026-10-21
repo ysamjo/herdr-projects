@@ -17,13 +17,21 @@ use std::time::{Duration, Instant};
 pub struct State {
     pub projects: Vec<Project>, pub project: ListState,
     pub draft: TextBox, pub order: TextBox, pub priority: bool, pub sidebar: bool, pub sending: bool, pub attaching: bool,
+    /// The one-line prompt that takes the input box while it is open: the CLI order, or a project from GitHub.
+    pub git: Option<Git>,
     pub notice: String, pub error: String, pub coordinator: Value, pub drafts: HashMap<String, String>,
     pub folders_rect: Rect, pub input_rect: Rect, pub send_rect: Rect, pub priority_rect: Rect, pub refresh_rect: Rect,
     pub conclusion: Value, pub expanded: bool, pub summary_scroll: u16, pub controls: Vec<(Rect, controls::Action)>,
     pub socket: String, pub tx: Sender<worker::Command>, pub closed_at: Option<Instant>,
 }
+/// The two ways into a GitHub project (flow/project.rs): a repository that exists is cloned, a new one is made with its
+/// own repository. Both take one line — the repository, or the project's name.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Git { Repo, New }
 impl State {
     pub fn folder(&self) -> Option<&Project> { self.projects.get(self.project.selected().unwrap_or(0)) }
+    /// The input box is not the task composer: it asks for one line (the CLI order, a repository, a project's name).
+    pub fn prompting(&self) -> bool { self.priority || self.git.is_some() }
     pub fn save_draft(&mut self) {
         if let Some(p) = self.project.selected().and_then(|i| self.projects.get(i)) {
             let path = p.path.display().to_string(); let value = self.draft.text(); self.drafts.insert(path.clone(), value.clone());
@@ -73,6 +81,7 @@ pub fn open() -> crate::err::Res<i32> {
     let mut s = State {
         projects: vec![], project: ListState::default(), draft: TextBox::default(), order: TextBox::default(),
         priority: false, sidebar: true, sending: false, attaching: false, notice: "Projektordner werden geladen …".into(), error: String::new(), coordinator: Value::Null, drafts,
+        git: None,
         folders_rect: Rect::default(), input_rect: Rect::default(), send_rect: Rect::default(), priority_rect: Rect::default(), refresh_rect: Rect::default(),
         conclusion: Value::Null, expanded: false, summary_scroll: 0, controls: vec![],
         socket, tx, closed_at: None,

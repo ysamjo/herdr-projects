@@ -9,28 +9,37 @@ fn block(title: impl Into<String>) -> Block<'static> { Block::default().borders(
 pub fn draw(f: &mut Frame, s: &mut State) {
     let area = f.area();
     s.controls.clear(); s.folders_rect = Rect::default(); s.send_rect = Rect::default(); s.priority_rect = Rect::default(); s.refresh_rect = Rect::default();
-    let full = s.expanded || s.priority || area.height > 12;
+    let full = s.expanded || s.prompting() || area.height > 12;
     let narrow = area.width < 80;
     let height = if full { area.height } else { area.height.min(if narrow { 9 } else { 7 }) };
     let strip = Rect::new(area.x, area.bottom().saturating_sub(height), area.width, height);
+    // The row of controls grows by a line rather than dropping the buttons that no longer fit.
+    let choices = if s.priority { vec![("Anwenden".into(), controls::Action::Send), ("Zurück".into(), controls::Action::Priority)] }
+        else if s.git.is_some() { vec![("Anlegen".into(), controls::Action::Send), ("Zurück".into(), controls::Action::Github)] }
+        else { controls::actions(s) };
+    let acts = controls::lines_needed(&choices, strip.width);
     let chunks = Layout::default().direction(Direction::Vertical).constraints([
-        Constraint::Length(1), Constraint::Length(if narrow { 2 } else { 1 }), Constraint::Min(1), Constraint::Length(if narrow { 2 } else { 1 }), Constraint::Length(1),
+        Constraint::Length(1), Constraint::Length(if narrow { 2 } else { 1 }), Constraint::Min(1), Constraint::Length(acts), Constraint::Length(1),
     ]).split(strip);
     let actual = if s.coordinator.b("agent") { s.coordinator.s("agent") } else { "startet" };
     let status = match s.coordinator.s("state") { "none" | "starting" => "startet", "working" => "arbeitet", "blocked" => "wartet auf dich", "idle" => "bereit", "exited" => "beendet", other => other };
     let header = format!("Space: {} · {actual} · {status}", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt"));
     f.render_widget(Paragraph::new(header), chunks[0]);
     controls::row(f, s, chunks[1], controls::navigation(s));
-    let input = if full && !s.priority {
+    let input = if full && !s.prompting() {
         let rows = (s.draft.visual(area.width.saturating_sub(3).max(1) as usize).len() as u16 + 2).clamp(3, 10);
         let parts = Layout::vertical([Constraint::Min(1), Constraint::Length(rows)]).split(chunks[2]);
         super::conclusion::draw(f, s, parts[0]); parts[1]
     } else { chunks[2] };
-    let title = if s.priority { "CLI-Reihenfolge · erste CLI orchestriert".into() } else { format!("Task für {}", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt")) };
+    let title = match (s.priority, s.git) {
+        (true, _) => "CLI-Reihenfolge · erste CLI orchestriert".to_string(),
+        (_, Some(super::Git::Repo)) => "Projekt aus GitHub · owner/name".to_string(),
+        (_, Some(super::Git::New)) => "Neues Projekt · Name (Repository im eigenen Konto)".to_string(),
+        _ => format!("Task für {}", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt")),
+    };
     let b = block(title); s.input_rect = b.inner(input); f.render_widget(b, input);
     let rect = s.input_rect;
-    if s.priority { editor(f, &mut s.order, rect, true); } else { editor(f, &mut s.draft, rect, true); }
-    let choices = if s.priority { vec![("Anwenden".into(), controls::Action::Send), ("Zurück".into(), controls::Action::Priority)] } else { controls::actions(s) };
+    if s.prompting() { editor(f, &mut s.order, rect, true); } else { editor(f, &mut s.draft, rect, true); }
     controls::row(f, s, chunks[3], choices);
     let note = if !s.error.is_empty() { s.error.clone() }
         else if !s.notice.is_empty() && s.notice != "Task eingeben und senden" { s.notice.clone() }

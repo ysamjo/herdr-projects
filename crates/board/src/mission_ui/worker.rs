@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, RecvTimeoutError};
 use std::time::Duration;
 
-pub enum Command { Refresh, Image(PathBuf), Submit(PathBuf, String), Priority(String), Approve(PathBuf, String), Conclusion(String), Focus(String), Mobile(bool), Fold }
-pub enum Update { Notice(String), Image(PathBuf, PathBuf), Folders(Vec<Project>), Snapshot(Value, Value), Approved(String), Sent(PathBuf, String), Applied(String), Error(String) }
+pub enum Command { Refresh, Image(PathBuf), Submit(PathBuf, String), Priority(String), Approve(PathBuf, String), Conclusion(String), Focus(String), Mobile(bool), Fold, Github(super::Git, String) }
+pub enum Update { Notice(String), Image(PathBuf, PathBuf), Folders(Vec<Project>), Snapshot(Value, Value), Approved(String), Sent(PathBuf, String), Applied(String), Error(String), Select(PathBuf) }
 pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update>) {
     std::thread::spawn(move || {
         crate::flow::send::shim();
@@ -51,6 +51,19 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
                 Ok(Command::Priority(text)) => match crate::mission_control::apply_priority(&text) {
                     Ok(primary) => { let _ = crate::coordinator::state::change(socket.as_str(), |s| { s.put("controlPriority", ""); true }); let _ = updates.send(Update::Applied(primary)); }
                     Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
+                },
+                // The two ways into a GitHub project. Both run here, off the screen: cloning a repository takes as long
+                // as it takes. The new project is put in front of the person once it is there.
+                Ok(Command::Github(mode, line)) => {
+                    let done = match mode { super::Git::Repo => crate::project::add(&line, None), super::Git::New => crate::project::create(&line, "", true, None) };
+                    match done {
+                        Ok(added) => {
+                            let _ = updates.send(Update::Notice(format!("{}: {} · github.com/{}", added.repo, added.folder.display(), added.github)));
+                            refresh(&updates);
+                            let _ = updates.send(Update::Select(added.folder));
+                        }
+                        Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
+                    }
                 },
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
@@ -114,6 +127,11 @@ pub fn receive(s: &mut State, update: Update) {
             s.notice = format!("Task für {} an den Orchestrator übergeben", folder.file_name().unwrap_or_default().to_string_lossy());
         }
         Update::Applied(primary) => { s.priority = false; s.error.clear(); s.notice = format!("Reihenfolge gespeichert und angewendet · Orchestrator: {primary}"); }
+        // A project that was just made: in front of the person, with the prompt closed.
+        Update::Select(folder) => {
+            s.sending = false; s.git = None; s.order.set_text("");
+            if let Some(i) = s.projects.iter().position(|p| p.path == folder) { s.choose(i); }
+        }
         Update::Error(error) => { s.sending = false; s.attaching = false; s.error = error; }
     }
 }

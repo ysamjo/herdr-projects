@@ -201,7 +201,7 @@ fn mission_control_only_draws_projects_and_input_with_tasks_in_the_native_sideba
     let (tx, _) = std::sync::mpsc::channel();
     let mut s = State {
         projects: vec![sw::mission_projects::Project {name: "proj".into(), path: w.root.clone(), remote: String::new()}],
-        project: Default::default(), draft: Default::default(), order: Default::default(), priority: false, sidebar: false, sending: false, attaching: false,
+        project: Default::default(), draft: Default::default(), order: Default::default(), priority: false, sidebar: false, sending: false, attaching: false, git: None,
         notice: String::new(), error: String::new(), coordinator: json!({"agent":"agy"}), drafts: Default::default(),
         folders_rect: Default::default(), input_rect: Default::default(), send_rect: Default::default(), priority_rect: Default::default(), refresh_rect: Default::default(),
         conclusion: serde_json::Value::Null, expanded: false, summary_scroll: 0, controls: vec![],

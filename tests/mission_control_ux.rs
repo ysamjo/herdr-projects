@@ -21,7 +21,7 @@ fn ui(w: &World) -> (State, Receiver<Command>) {
     let (tx, rx) = channel();
     let mut s = State {
         projects: vec![sw::mission_projects::Project { path:w.root.clone(), name:"proj".into(), remote:"https://github.com/example/proj".into() }], project:Default::default(),
-        draft:Default::default(),order:Default::default(),priority:false,sidebar:false,sending:false,attaching:false,notice:String::new(),error:String::new(),
+        draft:Default::default(),order:Default::default(),priority:false,sidebar:false,sending:false,attaching:false,git:None,notice:String::new(),error:String::new(),
         coordinator:json!({"agent":"agy","state":"idle","selection":{"reason":"agy ist Priorität 1."}}),drafts:Default::default(),
         folders_rect:Default::default(),input_rect:Default::default(),send_rect:Default::default(),priority_rect:Default::default(),refresh_rect:Default::default(),
         conclusion:serde_json::Value::Null,expanded:false,summary_scroll:0,controls:vec![],socket:w.socket.clone(),tx,closed_at:None,

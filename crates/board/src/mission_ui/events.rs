@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 pub fn handle(s: &mut State, event: Event) -> bool {
     match event {
-        Event::Paste(text) => { if s.priority { s.order.insert(&text); } else { s.sidebar = false; s.draft.insert(&text); } }
+        Event::Paste(text) => { if s.prompting() { s.order.insert(&text); } else { s.sidebar = false; s.draft.insert(&text); } }
         Event::Key(key) => {
             let Some(p) = crate::board::run::input::press_of(&key) else { return false };
             if keys::is(&p, K::Close) {
@@ -21,6 +21,13 @@ pub fn handle(s: &mut State, event: Event) -> bool {
             if s.priority {
                 if keys::is(&p, K::Back) { controls::act(s, Action::Priority); }
                 else if keys::is(&p, K::Enter) { let _ = s.tx.send(Command::Priority(s.order.text())); }
+                else { s.order.handle(&p); }
+                return false;
+            }
+            // The GitHub prompt: one line, Enter takes it, Back closes it (nothing is cloned then).
+            if s.git.is_some() {
+                if keys::is(&p, K::Back) { let _ = s.tx.send(Command::Fold); s.git = None; }
+                else if keys::is(&p, K::Enter) { controls::act(s, Action::Send); }
                 else { s.order.handle(&p); }
                 return false;
             }
