@@ -19,24 +19,28 @@ pub fn project_anchor(socket: &str, folder: &str) -> Option<String> {
     (p.b("pane") && marker_alive(p.at("owner"))).then(|| p.t("pane"))
 }
 pub fn register_project(socket: &str, folder: &str, workspace: &str, pane: &str) -> Res<()> {
-    let mut c = state(socket);
-    let key = project_key(folder);
-    let mut projects = c.o("projects").cloned().unwrap_or_default();
-    let mut p = projects.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
-    if p.s("pane") != pane { p.put("children", json!([])); }
-    p.put("folder", folder); p.put("workspace", workspace); p.put("pane", pane);
-    p.put("owner", marker());
-    projects.insert(key, Value::Object(p)); c.put("projects", Value::Object(projects));
-    write_json(&file(socket), &Value::Object(c))
+    with_lock_wait(&format!("mission-projects:{}", session_name(socket)), 10000, || {
+        let mut c = state(socket);
+        let key = project_key(folder);
+        let mut projects = c.o("projects").cloned().unwrap_or_default();
+        let mut p = projects.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
+        if p.s("pane") != pane { p.put("children", json!([])); }
+        p.put("folder", folder); p.put("workspace", workspace); p.put("pane", pane);
+        p.put("owner", marker());
+        projects.insert(key, Value::Object(p)); c.put("projects", Value::Object(projects));
+        write_json(&file(socket), &Value::Object(c))
+    })
 }
 pub fn prepare_project(socket: &str, folder: &str, workspace: &str, pane: &str) -> Res<()> {
-    let mut c = state(socket); let key = project_key(folder);
-    let mut projects = c.o("projects").cloned().unwrap_or_default();
-    let mut p = projects.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
-    if p.s("pane") != pane { p.put("children", json!([])); p.put("owner", Value::Null); }
-    p.put("folder", folder); p.put("workspace", workspace); p.put("pane", pane);
-    projects.insert(key, Value::Object(p)); c.put("projects", Value::Object(projects));
-    write_json(&file(socket), &Value::Object(c))
+    with_lock_wait(&format!("mission-projects:{}", session_name(socket)), 10000, || {
+        let mut c = state(socket); let key = project_key(folder);
+        let mut projects = c.o("projects").cloned().unwrap_or_default();
+        let mut p = projects.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
+        if p.s("pane") != pane { p.put("children", json!([])); p.put("owner", Value::Null); }
+        p.put("folder", folder); p.put("workspace", workspace); p.put("pane", pane);
+        projects.insert(key, Value::Object(p)); c.put("projects", Value::Object(projects));
+        write_json(&file(socket), &Value::Object(c))
+    })
 }
 pub fn project_workspace(socket: &str, folder: &str) -> Option<String> {
     state(socket).at("projects").get(&project_key(folder)).map(|p| p.t("workspace")).filter(|s| !s.is_empty())

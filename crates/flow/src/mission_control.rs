@@ -61,6 +61,16 @@ pub fn ensure(socket: &str) -> Res<String> {
     crate::mission_panes::tidy(socket)?;
     Ok(format!("Orchestrator für {}: {}", folder.file_name().unwrap_or_default().to_string_lossy(), desired.s("kind")))
 }
+/// A project gets its coordinator as soon as its space is selected, even before the first task.
+/// Other sessions stay alive; unopened projects do not launch dozens of CLIs in the background.
+pub fn ensure_visible(socket: &str) -> Res<()> {
+    let visible = selected_folder(socket)
+        .and_then(|folder| crate::mission_layout::project_workspace(socket, &folder.display().to_string()))
+        .and_then(|id| Herdr::new(Some(socket.into())).workspace_get(&id))
+        .map(|space| space.b("focused")).unwrap_or(false);
+    if visible || has_session(socket) { ensure(socket)?; }
+    Ok(())
+}
 pub fn has_session(socket: &str) -> bool {
     selected_folder(socket).and_then(|folder| project_coordinator(&folder, socket).ok())
         .and_then(|co| state::get(&co)).is_some()
@@ -157,7 +167,7 @@ pub fn submit(folder: &Path, text: &str, socket: &str) -> Res<()> {
 fn implementation_go(text: &str) -> bool {
     matches!(text.trim().to_lowercase().as_str(), "go" | "go!" | "go für umsetzung" | "umsetzung starten" | "umsetzung freigeben")
 }
-/// One persistent workspace, one root control pane; every CLI later splits that tab.
+/// One persistent project space with a task composer; the coordinator opens when that space is selected.
 pub fn show(focus: bool) -> Res<()> {
     let socket = current_socket();
     crate::store::files::with_lock_wait(&format!("mission-open:{}", crate::herdr::cli::session_name(&socket)), 5000, || show_once(focus))
@@ -192,9 +202,14 @@ fn show_once(focus: bool) -> Res<()> {
         };
         let pane_id = pane.t("pane_id");
         crate::mission_layout::prepare_project(&socket, &path, &workspace, &pane_id)?;
-        if api.pane_idle(&pane_id) {
+        if crate::mission_layout::project_anchor(&socket, &path).as_deref() != Some(&pane_id) {
             let cmd = format!("HERDR_CONTROL_PROJECT_PATH={} {} control", shq(&path), shq(&crate::store::files::bin().display().to_string()));
-            api.pane_run(&pane_id, &cmd)?;
+            api.when_at_prompt(&pane_id, || {
+                if !api.pane_idle(&pane_id) {
+                    return Err(crate::herdr::cli::HerdrError { code: "agent_pane_busy".into(), message: format!("Taskfeld für {} wartet auf eine freie Shell.", project.name) });
+                }
+                api.call(crate::herdr::cli::args(&["pane", "run", &pane_id, &cmd]))
+            })?;
         }
         if focus_pane.is_empty() { focus_pane = pane_id; }
     }

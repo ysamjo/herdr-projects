@@ -28,9 +28,7 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            if crate::mission_control::has_session(&socket) {
-                if let Err(e) = crate::mission_control::ensure(&socket) { let _ = updates.send(Update::Error(e.msg)); }
-            }
+            if let Err(e) = crate::mission_control::ensure_visible(&socket) { let _ = updates.send(Update::Error(e.msg)); }
             crate::mission_keeper::ensure();
             if !crate::keeper::keeper_alive() { crate::keeper::tick_once(&socket, false); }
             let tasks = crate::store::tasks::list(Default::default());

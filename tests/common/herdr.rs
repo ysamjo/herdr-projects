@@ -29,7 +29,7 @@ impl Fake for FakeHerdr {
 }
 impl FakeHerdr {
     pub fn ws_out(st: &Value, w: &Value) -> Value {
-        let mut o = json!({ "workspace_id": w.at("workspace_id"), "label": w.at("label"), "pane_count": st.arr("panes").iter().filter(|p| p.at("workspace_id") == w.at("workspace_id")).count() });
+        let mut o = json!({ "workspace_id": w.at("workspace_id"), "label": w.at("label"), "focused": st.arr("focus").iter().rev().filter_map(Value::as_str).find(|f| f.starts_with("workspace ")).map(|f| f == format!("workspace {}", w.s("workspace_id"))).unwrap_or(false), "pane_count": st.arr("panes").iter().filter(|p| p.at("workspace_id") == w.at("workspace_id")).count() });
         if w.at("worktree").is_object() { o["worktree"] = w.at("worktree").clone(); }
         o
     }

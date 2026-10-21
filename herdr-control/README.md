@@ -10,7 +10,7 @@ Dauerhaft geöffnete Projektansicht für Herdr: für jeden direkten Unterordner 
 
 **CLI-Reihenfolge** legt eine globale Reihenfolge für Orchestrator und Worker fest. Die erste CLI orchestriert und reviewed. Umsetzungen übernehmen Worker mit der nächsten verfügbaren anderen CLI; die laufende Orchestrator-CLI ist auch bei Worker-Fallbacks ausgeschlossen. Mindestens zwei unterschiedliche CLIs sind erforderlich. Unterstützt: Freebuff (`freebuff`), CodeBuddy (`codebuddy`), Claude Code (`claude`), Codex (`codex`), Antigravity (`agy`), Cursor (`cursor`), OpenCode (`opencode`), Kiro (`kiro`), Cline (`cline`), Qoder (`qodercli`) und Grok (`grok`). Modelle sind optional als `cli/modell` möglich. Antigravity kann auch als `antigravity-cli` oder `antigravity` eingegeben werden.
 
-Das Plugin legt beim Öffnen für jeden direkten Projektordner unter `~/Developer` einen Space mit Taskfeld an. `herdr-control.open` und `herdr-projects.open` öffnen beziehungsweise fokussieren diese Spaces; Herdrs Space-Leiste wechselt zwischen Projekten. Coordinator und Worker werden erst beim ersten Task gestartet und bleiben beim Wechsel erhalten. Ein Prioritätswechsel wartet einen laufenden Orchestrator-Turn ab.
+Das Plugin legt beim Öffnen für jeden direkten Projektordner unter `~/Developer` einen Space mit Taskfeld an. `herdr-control.open` und `herdr-projects.open` öffnen beziehungsweise fokussieren diese Spaces; Herdrs Space-Leiste wechselt zwischen Projekten. Der Orchestrator startet automatisch beim Auswählen seines Projekt-Spaces, auch ohne ersten Task. Worker starten erst bei delegierten Aufgaben. Alle Sitzungen bleiben beim Wechsel erhalten. Ein Prioritätswechsel wartet einen laufenden Orchestrator-Turn ab.
 
 ## Installation
 

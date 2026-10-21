@@ -14,6 +14,10 @@ pub fn pane(st: &mut Value, verb: &str, arg2: &str, argv: &[String], flag: &dyn 
     match verb {
         "process-info" => {
             let Some(pi) = flag("--pane").and_then(|id| find(st, &id)) else { return fail("pane_not_found", "pane not found") };
+            if st.i("shellStarting") > 0 {
+                st["shellStarting"] = json!(st.i("shellStarting") - 1);
+                return ok(json!({ "type": "pane_process_info", "process_info": { "shell_pid": null } }));
+            }
             let p = &st["panes"][pi];
             let shell = 4194400;
             // The agent is pid 1, with a process under it. `tool`: a command in a group of its own (not listed); in its own

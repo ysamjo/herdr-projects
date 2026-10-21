@@ -22,13 +22,33 @@ fn opening_mission_control_creates_a_task_space_for_every_project_folder() {
     std::fs::create_dir_all(root.join("alpha")).unwrap();
     std::fs::create_dir_all(root.join("beta")).unwrap();
     unsafe { std::env::set_var("HERDR_CONTROL_PROJECTS_DIR", &root); }
+    w.patch(|s| s["shellStarting"] = json!(1));
     sw::mission_control::show(false).unwrap();
     let spaces = Herdr::new(Some(w.socket.clone())).workspaces().unwrap();
     assert_eq!(spaces.len(), 2);
     assert!(spaces.iter().any(|s| s.s("label") == "alpha"));
     assert!(spaces.iter().any(|s| s.s("label") == "beta"));
     assert_eq!(w.state().at("panes").as_array().unwrap().len(), 2);
+    assert_eq!(calls(&w).iter().filter(|c| c.starts_with("pane run") && c.ends_with(" control")).count(), 2, "each task field starts even if its shell was not ready at first");
     assert_eq!(sw::mission_layout::state(&w.socket).at("projects").as_object().map(|o| o.len()), Some(2));
+}
+
+#[test]
+fn selecting_a_space_starts_its_orchestrator_without_a_first_message() {
+    let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
+    let api = Herdr::new(Some(w.socket.clone()));
+    let co = sw::mission_control::project_coordinator(&w.root, &w.socket).unwrap();
+    sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    assert!(sw::coordinator::state::get(&co).is_none(), "unselected projects do not launch CLIs");
+    let space = sw::mission_layout::project_workspace(&w.socket, &w.root_str()).unwrap();
+    api.workspace_focus(&space).unwrap();
+    sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    let started = sw::coordinator::state::get(&co).unwrap();
+    assert!(api.agent_get(started.s("pane")).unwrap().is_some());
+    assert!(started.arr("queue").is_empty());
+    assert_eq!(api.tabs(&space).unwrap().len(), 1, "the coordinator splits the project tab");
+    sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    assert_eq!(sw::coordinator::state::get(co).unwrap().s("pane"), started.s("pane"));
 }
 
 #[test]
