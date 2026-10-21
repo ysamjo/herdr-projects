@@ -122,7 +122,7 @@ pub fn command(action: &str) -> Res<()> {
 pub fn reopen(socket: &str, folder: &Path) -> Res<bool> {
     let co = crate::mission_control::project_coordinator(folder, socket)?;
     let c = state::get(&co).unwrap_or_default();
-    if c.b("stopped") || (c.b("pane") && Herdr::new(Some(socket.into())).pane_get(c.s("pane")).is_none()) {
+    if c.b("stopped") || !c.b("pane") || (c.b("pane") && Herdr::new(Some(socket.into())).pane_get(c.s("pane")).is_none()) {
         if !state::pumping(&c) && !c.b("want") {
             let desired = crate::mission_fallback::target_for(&co);
             if c.o("run").zip(desired.as_ref()).map(|(run, pick)| crate::coordinator::who::same_choice(run, pick)).unwrap_or(false) {

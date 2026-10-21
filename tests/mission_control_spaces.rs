@@ -34,7 +34,7 @@ fn opening_mission_control_creates_a_task_space_for_every_project_folder() {
 }
 
 #[test]
-fn selecting_a_space_starts_its_orchestrator_without_a_first_message() {
+fn selecting_a_space_does_not_start_orchestrator_until_a_task_is_submitted() {
     let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
     let api = Herdr::new(Some(w.socket.clone()));
     let co = sw::mission_control::project_coordinator(&w.root, &w.socket).unwrap();
@@ -43,9 +43,10 @@ fn selecting_a_space_starts_its_orchestrator_without_a_first_message() {
     let space = sw::mission_layout::project_workspace(&w.socket, &w.root_str()).unwrap();
     api.workspace_focus(&space).unwrap();
     sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    assert!(sw::coordinator::state::get(&co).as_ref().and_then(|c| api.agent_get(c.s("pane")).ok().flatten()).is_none(), "selecting space does not start coordinator before submit");
+    sw::mission_control::submit(&w.root, "Baue eine Suche", &w.socket).unwrap(); drain();
     let started = sw::coordinator::state::get(&co).unwrap();
-    assert!(api.agent_get(started.s("pane")).unwrap().is_some());
-    assert!(started.arr("queue").is_empty());
+    assert!(api.agent_get(started.s("pane")).unwrap().is_some(), "submitting a task starts the coordinator CLI");
     assert_eq!(api.tabs(&space).unwrap().len(), 1, "the coordinator splits the project tab");
     sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
     assert_eq!(sw::coordinator::state::get(co).unwrap().s("pane"), started.s("pane"));

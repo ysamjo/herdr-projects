@@ -32,38 +32,40 @@ pub fn ensure(socket: &str) -> Res<String> {
     crate::mission_panes::tidy(socket)?;
     Ok(format!("Orchestrator für {}: {}", folder.file_name().unwrap_or_default().to_string_lossy(), desired.s("kind")))
 }
-/// A project gets its coordinator as soon as its space is selected, even before the first task.
-/// Other sessions stay alive; unopened projects do not launch dozens of CLIs in the background.
+/// A project's coordinator opens only when a task is submitted. Unused and idle coordinators are stopped.
 /// A project that is not selected loses its coordinator on the next pass unless one of its tasks is still working:
-/// its pane is closed, the project's space and task field stay, and selecting it again opens a new one.
+/// its pane is closed, the project's space and task field stay.
 pub fn ensure_visible(socket: &str) -> Res<()> {
-    let visible = selected_folder(socket)
-        .and_then(|folder| crate::mission_layout::project_workspace(socket, &folder.display().to_string()))
-        .and_then(|id| Herdr::new(Some(socket.into())).workspace_get(&id))
-        .map(|space| space.b("focused")).unwrap_or(false);
-    if visible || has_session(socket) { ensure(socket)?; }
-    // Stop coordinators of projects that are not the current one and have no task still working.
-    stop_idle_coordinators(socket)?;
-    Ok(())
+    let co = selected_folder(socket).and_then(|f| project_coordinator(&f, socket).ok());
+    let running = co.as_ref().and_then(state::get).and_then(|c| Herdr::new(Some(socket.into())).agent_get(c.s("pane")).ok().flatten()).is_some();
+    if running || has_submitted(socket) { ensure(socket)?; }
+    stop_idle_coordinators(socket)
+}
+
+pub fn has_submitted(socket: &str) -> bool {
+    selected_folder(socket).and_then(|f| project_coordinator(&f, socket).ok()).and_then(|co| state::get(&co)).map(|c| !c.arr("queue").is_empty() || !c.arr("where").is_empty()).unwrap_or(false)
 }
 
 /// The coordinator of every project that is not selected and has no task still working is stopped at once.
-/// Its pane is closed; the project's space, tab and task field stay. Selecting the project again opens a new one.
+/// Its pane is closed; the project's space, tab and task field stay.
 fn stop_idle_coordinators(socket: &str) -> Res<()> {
-    let _api = Herdr::new(Some(socket.into()));
-    let current = selected_folder(socket);
-    let all = crate::coordinator::state::all(socket);
-    for co in all {
+    let current = focused_folder(socket).or_else(|| selected_folder(socket));
+    for co in crate::coordinator::state::all(socket) {
         let Some(c) = state::get(&co) else { continue };
         if c.b("stopped") || c.b("want") || state::pumping(&c) { continue; }
-        // The currently selected project is never stopped here.
         if current.as_ref().and_then(|f| project_coordinator(f, socket).ok()).as_ref() == Some(&co) { continue; }
-        // A project with a task that is still working: the coordinator stays.
         if has_working_task(&co, socket) { continue; }
-        // Stop the coordinator; its pane stays open. The next message or selection restarts it.
         requests::stop(&co)?;
     }
     Ok(())
+}
+
+pub fn focused_folder(socket: &str) -> Option<PathBuf> {
+    let layout = crate::mission_layout::state(socket);
+    let focused = Herdr::new(Some(socket.into())).workspaces().ok()?.into_iter().find(|w| w.b("focused"))?;
+    let project = layout.at("projects").as_object()?.values().find(|p| p.s("workspace") == focused.s("workspace_id"))?.clone();
+    let folder = PathBuf::from(project.s("folder"));
+    folder.is_dir().then(|| std::fs::canonicalize(&folder).unwrap_or(folder))
 }
 
 /// Does this project's coordinator have any task that is still working?
@@ -78,25 +80,19 @@ fn has_working_task(co: &Co, socket: &str) -> bool {
             ["starting", "setup", "working", "checking", "pushing", "reviewing", "merging"].contains(&t.s("stage"))
         })
 }
-pub fn has_session(socket: &str) -> bool {
-    selected_folder(socket).and_then(|folder| project_coordinator(&folder, socket).ok())
-        .and_then(|co| state::get(&co)).is_some()
-}
+pub fn has_session(socket: &str) -> bool { has_submitted(socket) }
 pub fn selected_folder(socket: &str) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("HERDR_CONTROL_PROJECT_PATH") {
         let path = PathBuf::from(path);
         return path.is_dir().then(|| std::fs::canonicalize(&path).unwrap_or(path));
     }
-    let layout = crate::mission_layout::state(socket);
-    let focused = Herdr::new(Some(socket.into())).workspaces().ok().and_then(|spaces| spaces.into_iter().find(|w| w.b("focused")));
-    if let Some(project) = focused.and_then(|w| layout.at("projects").as_object()?.values().find(|p| p.s("workspace") == w.s("workspace_id")).cloned()) {
-        let folder = PathBuf::from(project.s("folder"));
-        if folder.is_dir() { return Some(std::fs::canonicalize(&folder).unwrap_or(folder)); }
-    }
-    let path: PathBuf = if layout.s("selected").is_empty() {
-        layout.at("projects").as_object()?.values().next()?.t("folder").into()
-    } else { PathBuf::from(layout.s("selected")) };
-    path.is_dir().then(|| std::fs::canonicalize(&path).unwrap_or(path))
+    focused_folder(socket).or_else(|| {
+        let layout = crate::mission_layout::state(socket);
+        let path: PathBuf = if layout.s("selected").is_empty() {
+            layout.at("projects").as_object()?.values().next()?.t("folder").into()
+        } else { PathBuf::from(layout.s("selected")) };
+        path.is_dir().then(|| std::fs::canonicalize(&path).unwrap_or(path))
+    })
 }
 pub fn is_active(socket: &str) -> bool { crate::mission_layout::state(socket).at("projects").as_object().map(|p| !p.is_empty()).unwrap_or(false) }
 pub fn selected_coordinator(socket: &str) -> Option<Co> {
@@ -155,7 +151,7 @@ pub fn submit_report(folder: &Path, text: &str, socket: &str, report_id: Option<
     if !folder.is_dir() { crate::fail!("Der Projektordner ist nicht mehr vorhanden: {}", folder.display()) }
     let co = project_coordinator(&folder, socket)?;
     let actual = state::get(&co).unwrap_or_default();
-    let closed = actual.b("stopped") || (actual.b("pane") && Herdr::new(Some(socket.into())).pane_get(actual.s("pane")).is_none());
+    let closed = actual.b("stopped") || !actual.b("pane") || (actual.b("pane") && Herdr::new(Some(socket.into())).pane_get(actual.s("pane")).is_none());
     if closed {
         crate::mission_view::reopen(socket, folder)?;
     } else if let (Some(run), Some(desired)) = (actual.o("run"), crate::mission_fallback::target_for(&co)) {
