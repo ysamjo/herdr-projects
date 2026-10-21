@@ -80,6 +80,36 @@ fn selecting_another_project_keeps_each_orchestrator_in_its_own_space() {
 }
 
 #[test]
+fn an_idle_coordinator_of_an_unselected_project_is_stopped_one_with_a_working_task_is_not() {
+    let w = world(); apply_priority("agy,codex").unwrap();
+    mission(&w); sw::mission_control::ensure(&w.socket).unwrap(); drain();
+    let api = Herdr::new(Some(w.socket.clone()));
+    let first = sw::mission_control::project_coordinator(&w.root, &w.socket).unwrap();
+    let first_pane = sw::coordinator::state::get(first.clone()).unwrap().t("pane");
+    let other = w.base.join("other-project");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    std::fs::write(other.join("b.txt"), "one\n").unwrap();
+    git(&other, &["add", "-A"]); git(&other, &["commit", "-qm", "init"]);
+    let ws = api.workspace_create(other.to_str().unwrap(), "other-project", &[]).unwrap();
+    sw::mission_layout::register_project(&w.socket, other.to_str().unwrap(), &ws.at("workspace").t("workspace_id"), &ws.at("root_pane").t("pane_id")).unwrap();
+    let second = sw::mission_control::project_coordinator(&other, &w.socket).unwrap();
+    sw::coordinator::state::change(second.clone(), |c| { c.put("stopped", false); true }).unwrap();
+    // The selected project keeps its coordinator; the other one is idle and goes.
+    sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    assert_eq!(sw::coordinator::state::get(first.clone()).unwrap().at("stopped"), &json!(false));
+    assert!(api.agent_get(&first_pane).unwrap().is_some(), "the selected project's coordinator keeps running");
+    assert_eq!(sw::coordinator::state::get(second.clone()).unwrap().at("stopped"), &json!(true), "an idle coordinator of an unselected project is stopped");
+    // A task that is still working in that project keeps its coordinator.
+    let working = sw::actions::filing::add(&other, "läuft noch", Default::default()).unwrap().t("id");
+    patch(&working, |t| { t.put("stage", "working"); t.obj_mut("link").put("socket", w.socket.clone()); }).unwrap();
+    assert_eq!(working.split('/').next(), second.repo(), "the task belongs to that project");
+    sw::coordinator::state::change(second.clone(), |c| { c.put("stopped", false); true }).unwrap();
+    sw::mission_control::ensure_visible(&w.socket).unwrap(); drain();
+    assert_eq!(sw::coordinator::state::get(second.clone()).unwrap().at("stopped"), &json!(false), "a working task keeps the coordinator");
+}
+
+#[test]
 fn reviewed_research_report_returns_a_conclusion_and_waits_for_go_before_implementation() {
     let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();

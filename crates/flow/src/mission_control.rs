@@ -34,21 +34,21 @@ pub fn ensure(socket: &str) -> Res<String> {
 }
 /// A project gets its coordinator as soon as its space is selected, even before the first task.
 /// Other sessions stay alive; unopened projects do not launch dozens of CLIs in the background.
-/// Coordinators of projects that have not been focused for a while are stopped: their pane stays, the CLI inside it
-/// does not run idle. The pane is reopened when the project is selected again.
+/// A project that is not selected loses its coordinator on the next pass unless one of its tasks is still working:
+/// its pane is closed, the project's space and task field stay, and selecting it again opens a new one.
 pub fn ensure_visible(socket: &str) -> Res<()> {
     let visible = selected_folder(socket)
         .and_then(|folder| crate::mission_layout::project_workspace(socket, &folder.display().to_string()))
         .and_then(|id| Herdr::new(Some(socket.into())).workspace_get(&id))
         .map(|space| space.b("focused")).unwrap_or(false);
     if visible || has_session(socket) { ensure(socket)?; }
-    // Stop coordinators of projects that are not the current one and have no active tasks.
+    // Stop coordinators of projects that are not the current one and have no task still working.
     stop_idle_coordinators(socket)?;
     Ok(())
 }
 
-/// Coordinators of projects that have not been focused for a while and have no working tasks are stopped.
-/// The pane stays open for the task composer; only the CLI inside it is stopped.
+/// The coordinator of every project that is not selected and has no task still working is stopped at once.
+/// Its pane is closed; the project's space, tab and task field stay. Selecting the project again opens a new one.
 fn stop_idle_coordinators(socket: &str) -> Res<()> {
     let _api = Herdr::new(Some(socket.into()));
     let current = selected_folder(socket);
