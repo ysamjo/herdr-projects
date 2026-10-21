@@ -85,6 +85,17 @@ fn the_inbox_never_drops_text_and_taken_text_can_be_put_back() {
 }
 
 #[test]
+fn a_broken_line_in_a_jsonl_file_keeps_the_lines_that_are_whole() {
+    let _w = world();
+    let file = sw::store::files::data_dir().join("lines.jsonl");
+    std::fs::write(&file, "{\"ok\":1}\nnot json\n{\"ok\":2}\n").unwrap();
+    let got = sw::store::files::read_lines(&file);
+    assert_eq!(got.iter().map(|v| v.i("ok")).collect::<Vec<_>>(), vec![1, 2]);
+    std::fs::write(&file, "{\"ok\":3}\n").unwrap();
+    assert_eq!(sw::store::files::read_lines(&file).len(), 1);
+}
+
+#[test]
 fn login_failures_are_recognised_from_diagnostics_not_from_test_names_or_assertions() {
     use sw::store::failures::is_auth_failure;
     assert!(is_auth_failure("fatal: could not read Username for 'https://github.com': terminal prompts disabled"));

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The one command that runs the tests, for everyone: `npm run check` (`npm test`, `sh scripts/check.sh`). It builds the
-# program, writes the made tables when they are out of date (and says so: commit them), checks the repo's own rules and
-# runs every test. `--all` runs everything (as a run with no names does); names run one area's test files or the
+# program, writes the made tables when they are out of date and stops (they belong in the commit), checks the repo's
+# own rules and runs every test. `--all` runs everything (as a run with no names does); names run one area's test files or the
 # tests whose names hold them (`npm run check board-panel textbox`); `--since <commit>` is the shorter check of a fix
 # round: only the test files the change since that commit reaches (scripts/changed-tests.sh), or all of them where that
 # is not known; `--fresh` runs again what already passed. What
@@ -68,7 +68,12 @@ cargo build --profile quick --quiet
 say "1/3 steps"
 # The made tables, written when out of date; then the rules (tests/guard.rs runs them too).
 step="writing the made tables"
-./target/quick/herdr-projects docs
+made=$(./target/quick/herdr-projects docs)
+printf '%s\n' "$made"
+# Written now means they were out of date; the guard below only sees them fresh. They belong in the commit.
+case "$made" in
+  Wrote*) quit "$made. Commit the made tables, then run the check again." ;;
+esac
 step="checking the repo's rules"
 ./target/quick/herdr-projects docs --guard
 say "2/3 steps"

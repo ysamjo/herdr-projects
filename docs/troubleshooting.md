@@ -176,6 +176,6 @@ The task panel shows most of this already. `herdr-projects details <id>` prints 
   board offers the key on its first screen ([installing](install.md#the-first-run)).
 - **The board looks cut off or half empty**: another Herdr window on the same session (a second device, a browser tab)
   has the size. Type a key in this window ([the board's size](board-size.md)).
-- **Herdr refuses the plugin**: your running Herdr server must be 0.9.3 or newer. Restart it after updating Herdr.
+- **Herdr refuses the plugin**: your running Herdr server must be 0.9.5 or newer. Restart it after updating Herdr.
 - **Another machine's tasks do not show**: run `herdr-projects machines`, and see
   [when a machine does not answer](other-machines.md#when-a-machine-does-not-answer).
