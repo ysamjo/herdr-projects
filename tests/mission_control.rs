@@ -35,6 +35,16 @@ fn priority_selects_the_coordinator_and_workers_and_refuses_invalid_changes_befo
     assert_eq!(setting_text("coordinator.agent", None), "agy");
 }
 #[test]
+fn a_priority_already_in_effect_leaves_a_setting_changed_by_hand_alone() {
+    let _w = world();
+    apply_priority("agy,codex").unwrap();
+    set_value("coordinator.agent", &json!("claude"), &Scope::you()).unwrap();
+    apply_priority("agy,codex").unwrap();
+    assert_eq!(setting_text("coordinator.agent", None), "claude");
+    apply_priority("codex,agy").unwrap();
+    assert_eq!(setting_text("coordinator.agent", None), "codex");
+}
+#[test]
 fn folders_are_visible_before_they_have_tasks_and_keep_their_real_origin() {
     let w = world();
     let root = w.base.join("Developer");
@@ -58,7 +68,7 @@ fn opening_and_submitting_uses_the_selected_cli_and_project_space() {
     let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
     assert_eq!(c.at("run").s("kind"), "agy");
     assert_ne!(c.s("pane"), root);
-    assert!(!c.b("tiled"));
+    assert!(c.b("tiled"), "the coordinator is a pane beside the task field, not a space of its own");
     assert_eq!(w.state().arr("workspaces").len(), 1, "task field and coordinator share the project space");
     submit(&w.root, "Baue eine Suche", &w.socket).unwrap(); drain();
     let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
@@ -112,13 +122,16 @@ fn changing_priority_replaces_an_idle_coordinator_without_closing_mission_contro
 fn coordinator_quota_handover_replaces_the_error_terminal_and_follows_the_order() {
     let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();
-    let old = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
+    let before = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    let old = before.t("pane");
+    let old_terminal = before.t("terminal");
     w.patch(|st| { for p in st["panes"].as_array_mut().unwrap() { if p.s("pane_id") == old { p["agent"]["screen"] = json!("⏺ API Error: usage limit reached. Quota exceeded."); p["agent"]["status"] = json!("done"); } } });
     sw::mission_fallback::tick(&w.socket).unwrap(); drain();
     let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
     assert_eq!(c.at("run").s("kind"), "codex");
-    assert_ne!(c.s("pane"), old);
-    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_none());
+    // A closed pane's id is herdr's to give again; the terminal that hit the quota is the one that is gone.
+    assert_ne!(c.s("terminal"), old_terminal);
+    assert!(w.state().arr("panes").iter().all(|p| p.s("terminal_id") != old_terminal));
     assert_eq!(sw::mission_fallback::target_for(&coordinator(&w)).unwrap().s("kind"), "codex");
     assert!(prompts(&w, c.s("pane")).last().unwrap().contains("Providerwechsel"));
     assert_eq!(w.state().arr("tabs").len(), 1);
@@ -210,7 +223,9 @@ fn antigravity_individual_quota_marker_starts_the_next_coordinator_and_keeps_pro
     let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();
     submit(&w.root, "Ist die Startseite umgestellt?", &w.socket).unwrap(); drain();
-    let old = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
+    let before = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    let old = before.t("pane");
+    let old_terminal = before.t("terminal");
     w.patch(|st| { for p in st["panes"].as_array_mut().unwrap() { if p.s("pane_id") == old { p["agent"]["screen"] = json!("⚠ Individual quota reached. Please upgrade your subscription. Resets in 4h."); p["agent"]["status"] = json!("done"); } } });
     sw::mission_fallback::tick(&w.socket).unwrap(); drain();
     let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
@@ -218,7 +233,8 @@ fn antigravity_individual_quota_marker_starts_the_next_coordinator_and_keeps_pro
     let messages = prompts(&w, c.s("pane"));
     assert!(messages.last().unwrap().contains(&w.root_str()));
     assert!(messages.last().unwrap().contains("Ist die Startseite umgestellt?"));
-    assert!(Herdr::new(Some(w.socket.clone())).pane_get(&old).is_none());
+    assert_ne!(c.s("terminal"), old_terminal);
+    assert!(w.state().arr("panes").iter().all(|p| p.s("terminal_id") != old_terminal));
 }
 
 #[test]

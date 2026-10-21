@@ -36,13 +36,17 @@ fn fail_start(id: &str, title: &str, said: &str, again: &str) {
     let look = if screen.is_empty() { String::new() } else { format!("Its terminal is still open: go into the task ({}) to see all of it. ", key_name("enter")) };
     let detail = sf::detail(&w, said, &screen, &look, &log);
     sf::log(&log, &kind, &detail);
-    let _ = update_wait(id, 10000, |t| {
+    let tell = t.s("startNotified") != w.short;
+    let failed = update_wait(id, 10000, |t| {
         if t.at("runner").i("pid") != std::process::id() as i64 { return Ok(Change::Keep); }
         t.put("stage", "failed"); t.put("msg", format!("{}: {}", title.trim_end_matches(" the agent"), w.short));
         for (k, v) in failure_patch(&obj(json!({ "stage": "start", "title": title, "detail": detail, "agentCanFix": false, "auth": w.auth, "next": w.next }))) { t.insert(k, v); }
         t.obj_mut("failure").put("next", w.next.clone()); // a login too: its own next step, not "tell the agent to continue"
+        if tell { t.put("startNotified", w.short.clone()); } // the orchestrator is told once per cause
         Ok(Change::Write)
-    });
+    }).unwrap_or_default();
+    // The orchestrator waits for a result: without this it never learns that none is coming (mission_notify.rs).
+    if tell && failed.s("startNotified") == w.short { crate::mission_notify::start_failed(&failed, &w.short, &w.next); }
 }
 fn link_pane(t: &mut Task, pane: &Value, workspace: &str, owns: bool) {
     let l = t.obj_mut("link");

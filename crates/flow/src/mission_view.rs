@@ -14,9 +14,10 @@ fn save(socket: &str, folder: &Path, value: Obj) -> Res<()> { write_json(&file(s
 fn ratio(layout: &Value) -> String { (1.0 - 9.0 / layout.at("area").i("height").max(16) as f64).clamp(0.55, 0.9).to_string() }
 
 /// Swap positions, keeping both terminal identities: the new coordinator occupies the large upper area.
+/// A layout can still name a pane that was closed a moment ago (the retired coordinator): only a live pane is split.
 pub fn split_coordinator(api: &Herdr, control: &str, cwd: &str, env: &[(String, String)]) -> Res<Value> {
     let layout = api.pane_layout(control).unwrap_or_default();
-    if let Some(other) = layout.arr("panes").iter().filter(|p| p.s("pane_id") != control)
+    if let Some(other) = layout.arr("panes").iter().filter(|p| p.s("pane_id") != control && api.pane_get(&p.s("pane_id")).is_some())
         .max_by_key(|p| p.at("rect").i("width") * p.at("rect").i("height")) {
         return Ok(api.pane_split(other.s("pane_id"), cwd, "right", env)?);
     }

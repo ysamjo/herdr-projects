@@ -40,6 +40,8 @@ pub fn explain(s: &Start, said: &str, screen: &str) -> Why {
         return why(format!("{k} is not installed here"), format!("Install {k} so that `{}` runs in a terminal here, or choose another program ({}), then {again}.", super::kinds::program(k), s.setting));
     }
     if said.contains("needs herdr's own integration") { return why(format!("{k} needs herdr's own integration"), format!("Run `herdr integration install {}`, then {again}.", super::kinds::kind(k).map(|a| a.integration).unwrap_or(k))); }
+    // herdr starts only the programs it knows as an agent kind; freebuff and codebuddy are run in the pane instead.
+    if said.contains("unsupported interactive agent kind") { return why(format!("this herdr cannot start {k} as an agent"), format!("Install {k}'s Herdr plugin so that it reports its state in the pane, or choose another program ({}), then {again}.", s.setting)); }
     if cut_off(screen) { return why("its start command was cut off: the terminal's shell was still starting".into(), format!("The board cleared the half-typed command: {again}.")); }
     if said.contains("canonical mode") {
         return why("its terminal's shell was not ready for the start command".into(), format!("The board waited for the shell's prompt and tried {} times. Wait until the task's terminal shows its prompt, then {again}. A shell that is slow to start (its startup file) causes this.", crate::herdr::shell_ready::RETRIES + 1));
