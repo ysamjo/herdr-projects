@@ -9,6 +9,69 @@ use sw::store::handovers::{handover_line, handovers};
 const FAIL: &str = r#"{ "verdict": { "meets": false, "findings": [{ "severity": "major", "subject": "The file says v1, the task asked for v2", "where": "f.txt:1", "proof": "cat f.txt" }], "text": "Not what was asked." } }"#;
 
 #[test]
+fn quota_handoff_preserves_commits_loose_files_and_finishes_the_original_task() {
+    let w = cut_world("30", json!({ "worker.fallback": "codex", "check.command": "test -f half.txt && test -f new.txt && test -f finished.txt && grep -q changed a.txt", "review.when": "never" }));
+    w.script(json!({ "worker": [
+        { "files": { "half.txt": "committed\n" }, "commit": "first half", "status": "working", "after": 0,
+          "then": { "files": { "a.txt": "changed\n", "new.txt": "uncommitted\n" }, "ends": "claude-usage-limit-made" } },
+        { "files": { "finished.txt": "finished\n" }, "note": "Completed the remaining work." }
+    ] }));
+    let id = w.add("Finish both halves without losing earlier work");
+    delegate(&id);
+    let first = settle(&id);
+    let tree = std::path::Path::new(first.s("worktree"));
+    std::fs::write(tree.join("binary.dat"), [0, 255, 42]).unwrap();
+    w.go_on(&first);
+    let done = settle(&id);
+    assert_eq!(done.s("stage"), "approval", "{}", done.at("failure"));
+    assert_eq!(starts(&w), vec!["claude", "codex"]);
+    assert_eq!(handovers(&done).len(), 1);
+    assert_eq!(done.s("id"), id);
+    assert_eq!(done.at("link").s("pane"), first.at("link").s("pane"));
+    assert_eq!(done.s("worktree"), first.s("worktree"));
+    assert_eq!(done.s("branch"), first.s("branch"));
+    assert_eq!(read(&tree.join("half.txt")), "committed\n");
+    assert_eq!(read(&tree.join("a.txt")), "changed\n");
+    assert_eq!(read(&tree.join("new.txt")), "uncommitted\n");
+    assert_eq!(std::fs::read(tree.join("binary.dat")).unwrap(), [0, 255, 42]);
+    assert_eq!(read(&tree.join("finished.txt")), "finished\n");
+    assert!(git(tree, &["log", "--format=%s"]).contains("first half"));
+    let told = prompts(&w, done.at("link").s("pane"))[0].clone();
+    assert!(told.contains("Finish both halves without losing earlier work"), "{told}");
+    assert!(told.contains("first half"), "{told}");
+    assert!(told.contains("new.txt") && told.contains("binary.dat") && told.contains("a.txt"), "the successor needs the loose file paths: {told}");
+    assert!(git(tree, &["status", "--porcelain"]).is_empty());
+}
+
+struct UnknownAgent(std::rc::Rc<common::herdr::FakeHerdr>);
+impl sw::herdr::cli::Fake for UnknownAgent {
+    fn run(&self, args: &[String], input: &str) -> sw::herdr::cli::Ran {
+        if args.first().map(String::as_str) == Some("agent") && args.get(1).map(String::as_str) == Some("get") {
+            return sw::herdr::cli::Ran { status: 1, stdout: String::new(), stderr: json!({ "error": { "code": "timeout", "message": "status unavailable" } }).to_string() };
+        }
+        self.0.run(args, input)
+    }
+    fn kids(&self, pid: i64) -> Vec<i64> { self.0.kids(pid) }
+    fn wired_to(&self, pid: i64, group: &[i64]) -> Option<bool> { self.0.wired_to(pid, group) }
+    fn kill(&self, pid: i64) { self.0.kill(pid) }
+}
+
+#[test]
+fn handoff_waits_when_the_old_agents_status_cannot_be_confirmed() {
+    let w = cut_world("30", json!({ "worker.fallback": "codex" }));
+    w.script(json!({ "worker": [{ "status": "working" }] }));
+    let id = w.add("Unknown process status");
+    delegate(&id);
+    settle(&id);
+    sw::herdr::cli::set_fake(Some(std::rc::Rc::new(UnknownAgent(w.fake.clone()))));
+    let mut g = sw::runner::Guard::free(&id);
+    assert!(!sw::finish::hand_over::hand_over(&id, &mut g, "out of allowance", "").unwrap());
+    assert_eq!(starts(&w), vec!["claude"], "never start a successor while the old process might still write");
+    assert!(handovers(&task(&id)).is_empty());
+    assert!(task(&id).at("fallbacks").s("worker").contains("status unavailable"));
+}
+
+#[test]
 fn out_of_allowance_the_next_agent_takes_over_in_the_same_worktree_and_is_told_what_was_done() {
     let w = cut_world("30,30", json!({ "worker.fallback": ["codex", "pi"] }));
     w.script(json!({ "worker": [{ "files": { "half.txt": "half\n" }, "commit": "half the work", "ends": "claude-usage-limit-made" }, { "status": "working" }] }));

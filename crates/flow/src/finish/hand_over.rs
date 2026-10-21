@@ -29,9 +29,12 @@ fn done_so_far(t: &Task) -> String {
     let tree = cwd_of(t);
     let base = if t.b("baseSha") { t.t("baseSha") } else if t.b("from") { t.t("from") } else { "HEAD".into() };
     let commits: Vec<String> = git_out(&tree, &["log", "--oneline", "--no-decorate", "-20", &format!("{base}..HEAD")]).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect();
-    let loose = flow::git::dirty(&tree).lines().filter(|l| !l.is_empty()).count();
+    let status = git_out(&tree, &["status", "--porcelain=v1", "--untracked-files=all"]).unwrap_or_default();
+    let loose = status.lines().filter(|l| !l.is_empty()).count();
+    let head = git_out(&tree, &["rev-parse", "HEAD"]).unwrap_or_default();
     [if commits.is_empty() { "It committed nothing on this branch yet.".to_string() } else { format!("Its commits on this branch so far, newest first:\n{}", commits.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) },
-        if loose > 0 { format!("{loose} file{} changes that are not committed yet.", if loose == 1 { " has" } else { "s have" }) } else { String::new() }]
+        format!("Working directory: {}\nStarting revision: {base}\nCurrent revision: {}", tree.display(), head.trim()),
+        if loose > 0 { format!("{loose} file{} changes that are not committed yet. Preserve these files, including untracked and binary files:\n{status}", if loose == 1 { " has" } else { "s have" }) } else { String::new() }]
         .into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n")
 }
 /// The findings that are still open: the last review's, when it failed the gate and the work has not passed one since.
@@ -48,7 +51,7 @@ pub fn handover_prompt(t: &Task, from: &str, why: &str, findings: &str) -> Strin
         done_so_far(t),
         if t.b("said") { format!("Its last message was:\n{}", t.s("said")) } else { String::new() },
         if findings.is_empty() { open_findings(t) } else { findings.to_string() },
-        "Finish the task as its rules say.".into(),
+        "Inspect the existing files and changes before editing. The previous agent may have stopped without a final summary. Check whether external actions (such as a push or pull request) already happened before repeating them. Finish the task as its rules say.".into(),
     ].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
 }
 /// What a hand-over changes on the task, put back whole when the next agent cannot be started.
@@ -81,7 +84,11 @@ pub fn hand_over_to(id: &str, g: &mut Guard, why: &str, findings: &str, first: O
         // The program that cannot go on is ended, so the pane is at its shell for the next one.
         let pane = t.at("link").t("pane");
         if api.pane_get(&pane).is_none() { note(g, "worker.fallback: nobody took over, the agent's terminal is gone".into())?; return Ok(false); }
-        if api.agent_get(&pane).ok().flatten().is_some() && !api.pane_quit(&pane, 6000) { note(g, format!("worker.fallback: nobody took over, {} could not be ended", agent_of(&from).kind))?; return Ok(false); }
+        match api.agent_get(&pane) {
+            Err(e) => { note(g, format!("worker.fallback: nobody took over, the previous agent's status is unknown ({})", one_line(&e.message, 160)))?; return Ok(false); }
+            Ok(Some(_)) if !api.pane_quit(&pane, 6000) => { note(g, format!("worker.fallback: nobody took over, {} could not be ended", agent_of(&from).kind))?; return Ok(false); }
+            _ => {}
+        }
         let before: Obj = KEPT.iter().map(|k| (k.to_string(), t.at(k).clone())).collect();
         let k = agent_of(&next).kind;
         let mut entry = Value::Null;

@@ -58,6 +58,32 @@ The new agent:
 - takes the task's `worker.effort` and `worker.access`, where its program takes them;
 - starts with rounds of its own: what the agent before it used up does not count against it.
 
+### Geprüfte Übergabe bei Kontingentende
+
+Die Übergabe nennt Arbeitsverzeichnis, Ausgangsrevision, aktuelles HEAD und die
+Pfade aller noch nicht committeten Änderungen, einschließlich neuer Dateien.
+Binärdateien bleiben im selben Worktree erhalten. Eine letzte Zusammenfassung
+der alten CLI ist nicht erforderlich. Die neue CLI soll den vorhandenen Stand
+zuerst prüfen und externe Aktionen wie Push oder PR-Anlage vor einer Wiederholung
+abgleichen; deren einmalige Ausführung ist dadurch nicht garantiert.
+
+Ein Fehler beim Abruf des alten Agentenstatus bedeutet **unbekannt**, nicht
+„beendet“. In diesem Fall startet keine weitere CLI, und die Aufgabe zeigt den
+Grund unter `worker.fallback`. Wenn der alte Agent noch vorhanden ist, muss
+Herdr dessen Beendigung bestätigen, bevor der Nachfolger startet.
+
+Der Regressionstest läuft über den regulären Prüfweg:
+
+```sh
+npm run check quota_handoff handoff_waits
+```
+
+Er verwendet echte Git-Worktrees und geskriptete CLIs: Die erste CLI committet
+einen Teil, hinterlässt weitere Änderungen samt neuer Binärdatei und meldet ein
+Kontingentende. Die zweite CLI ergänzt den Rest; der konfigurierte Check muss
+erfolgreich sein. Task-ID, Branch und Pane bleiben erhalten. Dies ist ein
+automatisierter Integrationsnachweis, keine Live-Abnahme der Anbieter-CLIs.
+
 A yes you had given to the earlier work is asked for again.
 
 ### Who is next
