@@ -69,6 +69,39 @@ fn a_coordinator_pane_closed_by_hand_is_not_opened_again_by_the_tick() {
 }
 
 #[test]
+fn a_coordinator_whose_error_passes_by_itself_is_asked_to_carry_on_before_another_program_takes_over() {
+    let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
+    sw::mission_control::ensure(&w.socket).unwrap(); drain();
+    let pane = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
+    w.patch(|st| { for p in st["panes"].as_array_mut().unwrap() { if p.s("pane_id") == pane { p["agent"]["screen"] = json!("⏺ API Error: 529 overloaded"); p["agent"]["status"] = json!("done"); } } });
+    sw::mission_fallback::tick(&w.socket).unwrap(); drain();
+    // The one rule every role follows (store/rule.rs): what passes by itself is waited out before anyone is replaced.
+    let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    assert_eq!(c.at("run").s("kind"), "agy", "no hand-over on the first sign of trouble");
+    assert!(c.at("controlRetry").b("until"), "{}", c.at("controlRetry"));
+    assert!(!prompts(&w, &pane).iter().any(|m| m.contains("Der Anbieter meldet")), "the wait is not over");
+    // Waited out: the same coordinator is asked to carry on in its own session, and keeps the task.
+    let until = c.at("controlRetry").i("until");
+    sw::clock::set(Some(until + 1000));
+    sw::mission_fallback::tick(&w.socket).unwrap(); drain();
+    sw::clock::set(None);
+    let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    assert!(prompts(&w, &pane).iter().any(|m| m.contains("Der Anbieter meldet")), "{:?}", prompts(&w, &pane));
+    assert_eq!((c.at("run").s("kind"), c.at("controlRetry").i("tries")), ("agy", 1));
+    // With the waits used up the next program on the order takes over, with the hand-over file as before.
+    for _ in 0..6 {
+        let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+        if c.at("run").s("kind") != "agy" { break }
+        sw::clock::set(Some(c.at("controlRetry").i("until") + 1000));
+        sw::mission_fallback::tick(&w.socket).unwrap(); drain();
+    }
+    sw::clock::set(None);
+    let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    assert_eq!(c.at("run").s("kind"), "codex", "after the waits: the next program");
+    assert!(prompts(&w, &pane).iter().any(|m| m.contains("Providerwechsel")));
+}
+
+#[test]
 fn a_coordinator_whose_program_herdr_cannot_start_as_an_agent_runs_in_its_pane() {
     let w = world(); apply_priority("freebuff,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();

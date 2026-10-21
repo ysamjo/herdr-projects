@@ -44,6 +44,28 @@ the same subscription does not land in the same empty budget: [what is known abo
 stop it, for a conflict with main or feedback on its pull request, or while a merge you approved is being repaired.
 Those are yours.
 
+## One rule for every role
+
+A worker, a reviewer and a coordinator are decided by the same rule, in one place
+(`crates/core/src/store/rule.rs`), so they cannot drift apart:
+
+| What the provider said | What happens |
+| --- | --- |
+| a login is needed | hand over at once — waiting does not log in |
+| out of allowance | hand over at once (`out of allowance until 17:00`) |
+| passes by itself: at capacity, overloaded, a rate limit, a dropped connection | wait 1, 2, 4 and 8 minutes, asking the same agent each time; then hand over |
+| its model is not there, or the provider refuses | hand over at once |
+
+The waits are the board's own and are read by all three: `HERDR_PROJECTS_RETRY_MS`
+(`60000,120000,240000,480000` by default, milliseconds, comma-separated) changes them for the whole machine. What is
+known about a subscription counts first: an allowance that is empty is not waited out, because another model of the
+same subscription is the same empty budget ([allowances](quota.md)).
+
+**The coordinator follows the same rule.** While its provider's error passes by itself it is asked to carry on in its
+own session after each wait (`controlRetry` on its state: `{ error, until, tries }`); only when the waits are used up
+does the next program on the order take over, with the hand-over file as before. So an overloaded provider no longer
+costs the coordinator its session at the first error.
+
 ## What a hand-over is
 
 The next agent on the list gets the task **in the same worktree**, on the same branch, in the same Herdr pane. The
@@ -53,6 +75,8 @@ program that cannot go on is ended, and the next one starts where it was. It is 
 - that it takes over, from whom and why, and to look at what is there and carry on, not start over;
 - **what was done so far**: the commits on the branch, whether changes lie uncommitted, and the last message of the agent
   before it;
+- **what the check last said**: the revision and command it passed on (so an old pass is not taken for the current
+  revision), or the output of the check that failed;
 - **the open findings**: what the last review found, when that review failed, or the failed check's output.
 
 The new agent:
@@ -185,6 +209,8 @@ The hand-over is one function (`hand_over` in `crates/flow/src/finish/hand_over.
 reason.
 
 - `crates/core/src/store/handovers.rs`: what is kept on the task, the next on the list, the words;
+- `crates/core/src/store/rule.rs`: wait or hand over — the one decision for every role;
 - `crates/flow/src/finish/hand_over.rs`: the working agent's hand-over;
 - `crates/flow/src/finish/review_fallback.rs`: the reviewer's;
-- tests: `tests/fallback.rs`, `tests/fallback_more.rs` and `tests/fallback_settings.rs`.
+- `crates/flow/src/mission_fallback.rs`: the coordinator's, on the global CLI order;
+- tests: `tests/fallback.rs`, `tests/fallback_more.rs`, `tests/fallback_settings.rs` and `tests/rule.rs`.

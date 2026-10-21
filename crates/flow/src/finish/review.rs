@@ -10,7 +10,7 @@ use crate::flow;
 use crate::json::*;
 use crate::limits::reached::{stop_at, tokens_over, StopHow};
 use crate::runner::{is_aborted, Guard};
-use crate::store::retries::{gave_up, retry_waits};
+use crate::store::retries::gave_up;
 use crate::store::tasks::{get, one_line, update_wait, Change};
 
 /// Why a reviewer stopped for good; for a model it could not use, the reason in plain words and what to do.
@@ -35,7 +35,6 @@ pub fn run_review(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, t
 #[allow(clippy::too_many_arguments)]
 pub fn run_review_with(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, to_land: bool, ch: &Obj, check: &str, plan: Option<&Plan>) -> Res<Reviewed> {
     if plan.is_none() && ch.s("review.by") == "coordinator" { return super::coordinator_review::run(id, g, text, change, to_land, ch, check); }
-    let waits = retry_waits();
     let mut tried: Vec<String> = vec![];
     let mut tries: i64 = 0;
     let mut again = true;
@@ -53,8 +52,11 @@ pub fn run_review_with(id: &str, g: &mut Guard, text: &str, change: Option<&Valu
         let Some(cut) = r.cut_by.as_ref() else { return Ok(r) };
         // At the task's token limit a cut-off review is not started again by itself.
         if let Some((limit, used)) = tokens_over(id, "") { stop_at(id, "tokens", &limit, used, StopHow { role: "reviewer".into(), ..Default::default() }); return Ok(Reviewed { aborted: true, ..Default::default() }); }
-        // It cannot review: the next one on `reviewer.fallback` does, as the same review, with the tries counted afresh.
-        if !cut.passing || tries >= waits.len() as i64 {
+        // The one rule every role follows (store/rule.rs): what passes by itself is waited out first; a login, an empty
+        // allowance or a refused model goes to the next reviewer at once.
+        let step = crate::store::rule::next(&crate::store::rule::Cut { error: &cut.error, reason: &cut.reason, auth: r.auth, passing: cut.passing, tries });
+        let Some((ms, done)) = step.waiting() else {
+            // It cannot review: the next one on `reviewer.fallback` does, as the same review, with the tries counted afresh.
             tried.push(r.by.clone());
             match next_reviewer(g, ch, &r.by, cut, r.auth, tries + 1, &tried) {
                 Ok(next) if !next.is_empty() => { tries = 0; continue; }
@@ -62,11 +64,11 @@ pub fn run_review_with(id: &str, g: &mut Guard, text: &str, change: Option<&Valu
                 Err(e) if is_aborted(&e) => return Ok(Reviewed { aborted: true, ..Default::default() }),
                 Err(e) => return Err(e),
             }
-        }
-        if !cut.passing { return Ok(Reviewed { error: refused_words(&r.by, &cut.error), auth: r.auth, cut: true, ..Default::default() }); }
-        if tries >= waits.len() as i64 { return Ok(Reviewed { error: format!("{}. Its error: {}", gave_up("reviewer", &cut.reason, tries + 1), cut.error.trim_end_matches(|c: char| c == '.' || c.is_whitespace())), cut: true, ..Default::default() }); }
-        let until = crate::clock::now() + waits[tries as usize];
-        let w = json!({ "who": "reviewer", "reason": cut.reason, "error": one_line(&cut.error, 400), "until": until, "tries": tries + 1 });
+            if !cut.passing { return Ok(Reviewed { error: refused_words(&r.by, &cut.error), auth: r.auth, cut: true, ..Default::default() }); }
+            return Ok(Reviewed { error: format!("{}. Its error: {}", gave_up("reviewer", &cut.reason, tries + 1), cut.error.trim_end_matches(|c: char| c == '.' || c.is_whitespace())), cut: true, ..Default::default() });
+        };
+        let until = crate::clock::now() + ms;
+        let w = json!({ "who": "reviewer", "reason": cut.reason, "error": one_line(&cut.error, 400), "until": until, "tries": done });
         let waited = (|| -> Res<()> {
             g.set(|t| { t.put("msg", "Under review"); t.put("watch", Value::Null); t.put("waiting", w.clone()); })?;
             while crate::clock::now() < until { std::thread::sleep(std::time::Duration::from_millis((until - crate::clock::now()).clamp(1, 1000) as u64)); g.check()?; }
@@ -77,6 +79,6 @@ pub fn run_review_with(id: &str, g: &mut Guard, text: &str, change: Option<&Valu
             let _ = update_wait(id, 10000, |t| { if t.at("waiting").s("who") != "reviewer" { return Ok(Change::Keep); } t.put("waiting", Value::Null); Ok(Change::Write) });
             return Ok(Reviewed { aborted: true, ..Default::default() });
         }
-        tries += 1;
+        tries = done;
     }
 }

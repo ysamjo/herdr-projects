@@ -21,10 +21,10 @@ use crate::limits::reached::{stop_at, tokens_over, StopHow};
 use crate::runner::{is_aborted, release, Guard};
 use crate::store::failures::{failure_patch, is_auth_failure};
 use crate::store::files::{dir_of, marker, marker_alive};
-use crate::store::handovers::{fresh_list, why_of};
+use crate::store::handovers::fresh_list;
 use crate::store::marks::{count_mark, pending_events};
 use crate::store::repos::cwd_of;
-use crate::store::retries::{gave_up, retry_waits};
+use crate::store::retries::gave_up;
 use crate::store::tasks::{get, one_line, update_wait, Change, Task};
 use crate::submit::pending_sent;
 use std::path::Path;
@@ -203,21 +203,22 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
             crate::store::quota::note(&crate::store::quota::group_of(&k), state, &x.error, crate::store::quota::reset_ms(&x.error, now()), id);
         }
         g.set(&keep)?;
-        // A passing provider error is nobody's to fix: the board waits and tells the agent to carry on, a few times with
-        // growing waits, before it gives up. A turn that was itself such a retry counts on from the one before.
+        // The one rule every role follows (store/rule.rs): an error that passes by itself is waited out and the agent
+        // told to carry on, a few times with growing waits; a login or an empty allowance hands the task over at once.
+        // A turn that was itself such a retry counts on from the one before.
         let tries = if wake.s("reason") == "retry" && wake.b("tries") { wake.i("tries") } else { t.at("cutRetry").i("tries") };
-        let waits_ms = retry_waits();
-        if x.passing && tries < waits_ms.len() as i64 {
+        let step = crate::store::rule::next(&crate::store::rule::Cut { error: &x.error, reason: &x.reason, auth: x.auth, passing: x.passing, tries });
+        if let Some((ms, done)) = step.waiting() {
             if let Some((limit, used)) = tokens_over(id, "agent") { stop_at(id, "tokens", &limit, used, StopHow::default()); return Ok(()); }
             let keep_intent = (wake.b("keepIntent") || t.at("cutRetry").b("keepIntent")) && t.b("mergeIntent");
-            let mut f = failure("agent", "Agent cut off", &format!("{why}\n\nThe {}. That passes by itself: the board tells the agent to carry on, up to {} times with growing waits.", gave_up("agent", &x.reason, 1), waits_ms.len()), &format!("Nothing: the board tells the agent to continue by itself. Reply or press {} to do it now.", key_name("sendBack")));
+            let mut f = failure("agent", "Agent cut off", &format!("{why}\n\nThe {}. That passes by itself: the board tells the agent to carry on, up to {} times with growing waits.", gave_up("agent", &x.reason, 1), crate::store::rule::waits().len()), &format!("Nothing: the board tells the agent to continue by itself. Reply or press {} to do it now.", key_name("sendBack")));
             f.put("auth", false); f.put("agentCanFix", true);
             let w = g.set(|t| {
                 t.put("stage", "failed"); t.put("msg", format!("Agent stopped: {}", one_line(&why, 200)));
                 if !keep_intent { t.put("mergeIntent", Value::Null); }
                 for (k, v) in failure_patch(&f) { t.insert(k, v); }
                 let at = t.at("failure").at("at").clone();
-                t.put("waiting", json!({ "who": "agent", "reason": x.reason, "error": one_line(&why, 400), "until": now() + waits_ms[tries as usize], "tries": tries + 1, "keepIntent": keep_intent, "for": at }));
+                t.put("waiting", json!({ "who": "agent", "reason": x.reason, "error": one_line(&why, 400), "until": now() + ms, "tries": done, "keepIntent": keep_intent, "for": at }));
             })?;
             flow::sidebar::tell_sidebar(&w);
             return Ok(());
@@ -226,7 +227,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
         let refused = if x.error.is_empty() || x.auth || x.passing { None } else { crate::agents::model_refused::read(&k, &x.error) };
         if let Some(r) = &refused { if model_refused::on_default(id, g, &t, r)? { return Ok(()); } }
         // It cannot go on: the next agent on `worker.fallback` takes the task over; with nobody left it waits for you.
-        let hw = if let Some(r) = &refused { r.plain.clone() } else if !x.error.is_empty() { why_of(&why, x.auth, x.passing, &x.reason, tries + 1, now()) } else if x.stop == "length" { "it ran out of room (context or output limit)".into() } else { "its model refused to continue".into() };
+        let hw = if let Some(r) = &refused { r.plain.clone() } else if !x.error.is_empty() { step.hand().unwrap_or_default() } else if x.stop == "length" { "it ran out of room (context or output limit)".into() } else { "its model refused to continue".into() };
         if hand_over(id, g, &hw, "")? { return Ok(()); }
         if let Some(r) = &refused { return model_refused::fail_refused(g, &t, r, &why); }
         if x.passing {

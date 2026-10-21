@@ -141,3 +141,16 @@ fn work_that_still_fails_review_after_its_rounds_goes_to_the_next_agent_with_the
     assert_eq!(t.i("reviewRounds"), 0);
     assert_eq!(t.at("review").at("stale"), &json!(true));
 }
+
+#[test]
+fn the_successor_hears_what_the_check_last_said_so_it_does_not_trust_an_old_pass() {
+    let w = world();
+    let id = w.add("Ein geprüfter Stand geht über");
+    sw::store::tasks::update(&id, |t| { t.put("checkPassed", json!({ "head": "abc1234", "with": "npm test" })); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    let told = sw::finish::hand_over::handover_prompt(&task(&id), "claude", "out of allowance", "");
+    assert!(told.contains("The check last passed on revision abc1234 (command: npm test)"), "{told}");
+    // A check that failed is still open, and its output goes along instead.
+    sw::store::tasks::update(&id, |t| { t.put("checkPassed", Value::Null); t.put("failure", json!({ "stage": "check", "detail": "Command: npm test\n\n2 tests failed" })); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    let told = sw::finish::hand_over::handover_prompt(&task(&id), "claude", "out of allowance", "");
+    assert!(told.contains("The check failed here, and that is still open") && told.contains("2 tests failed"), "{told}");
+}

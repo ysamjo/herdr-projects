@@ -42,15 +42,30 @@ fn open_findings(t: &Task) -> String {
     let rv = t.at("review");
     if rv.is_object() && !gate::passes(rv) && gate::sendable(rv) { format!("The last review of this work failed ({}), and what it found is still open:\n\n{}", gate::result(rv, "merge"), gate::findings_text(rv, false)) } else { String::new() }
 }
+/// What the check last said here, so the next agent knows what already held and what did not: a check that passed on an
+/// earlier revision is not a pass for this one, and a check that failed is still open.
+fn check_state(t: &Task) -> String {
+    let c = t.at("checkPassed");
+    if c.is_object() && !c.s("head").is_empty() {
+        return format!("The check last passed on revision {} (command: {}). If the work moved on since, that says nothing about the current revision: run it again before you finish.", c.s("head"), c.t("with"));
+    }
+    let f = t.at("failure");
+    if f.s("stage") == "check" && !f.s("detail").is_empty() { return format!("The check failed here, and that is still open:\n\n{}", crate::store::failures::bound_detail(f.s("detail"))); }
+    String::new()
+}
 /// All the next agent is given: the task as a first agent gets it, then that it takes over, from whom and why, what was
 /// done, the last words of the one before it, and what is open.
 pub fn handover_prompt(t: &Task, from: &str, why: &str, findings: &str) -> String {
     let place = if t.b("worktree") { format!("in the same folder, on the same branch ({})", t.s("branch")) } else { "in the same folder".into() };
+    // The caller that knows better says what is open; otherwise the last review and the last check speak for themselves.
+    let open = if findings.is_empty() {
+        [open_findings(t), check_state(t)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
+    } else { findings.to_string() };
     [first_prompt(t),
         format!("You are taking this task over from another agent ({from}), which could not go on: {why}. You work {place}: everything it did is there. Look at it first{} and carry on from where it stands. Do not start over, and do not undo its work without a reason.", if t.b("worktree") { " (git log, git status, git diff)" } else { "" }),
         done_so_far(t),
         if t.b("said") { format!("Its last message was:\n{}", t.s("said")) } else { String::new() },
-        if findings.is_empty() { open_findings(t) } else { findings.to_string() },
+        open,
         "Inspect the existing files and changes before editing. The previous agent may have stopped without a final summary. Check whether external actions (such as a push or pull request) already happened before repeating them. Finish the task as its rules say.".into(),
     ].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
 }
