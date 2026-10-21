@@ -18,6 +18,7 @@ pub mod old_copy;
 pub mod old_installs;
 pub mod old_research;
 pub mod old_suggestions;
+pub mod quota;
 pub mod repos;
 pub mod retries;
 pub mod reviews;

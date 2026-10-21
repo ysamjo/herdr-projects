@@ -236,6 +236,9 @@ pub fn worker_choice(t: &crate::store::tasks::Task, socket: &str) -> Res<String>
     order.extend(crate::store::settings::values::list_of(w.at("worker.fallback")));
     // The global list still supplies a candidate when the coordinator falls back onto the worker's first CLI.
     order.extend(parse_priority(&priority())?);
+    // What is out of allowance, or needs a login, is tried last: another model of the same subscription is the same
+    // empty budget (store/quota.rs).
+    let order = crate::store::quota::prefer(&order);
     order.into_iter().find(|a| worker_allowed_for(t, socket, a) && crate::finish::hand_over::usable(a, w.s("worker.access")).is_empty())
         .ok_or_else(|| crate::err::Error::new("Keine andere verfügbare Worker-CLI. Bitte die CLI-Reihenfolge ergänzen."))
 }

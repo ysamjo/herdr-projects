@@ -197,6 +197,11 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
     };
     if let Some(x) = turn.as_ref().filter(|x| !x.error.is_empty() || x.stop == "length" || x.stop == "refusal") {
         let why = if !x.error.is_empty() { x.error.clone() } else if x.stop == "length" { "The agent's reply was cut off: it ran out of room (context or output limit).".into() } else { "The model refused to continue.".into() };
+        // What this subscription is known to be now, for every other task and every model of it too (store/quota.rs).
+        if !x.error.is_empty() {
+            let state = if x.auth { crate::store::quota::LOGIN } else if crate::store::quota::out_of_allowance(&x.error) { crate::store::quota::EXHAUSTED } else { crate::store::quota::DEGRADED };
+            crate::store::quota::note(&crate::store::quota::group_of(&k), state, &x.error, crate::store::quota::reset_ms(&x.error, now()), id);
+        }
         g.set(&keep)?;
         // A passing provider error is nobody's to fix: the board waits and tells the agent to carry on, a few times with
         // growing waits, before it gives up. A turn that was itself such a retry counts on from the one before.
@@ -243,6 +248,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
         let screen = last_lines(&crate::agents::screen_text::screen_text(&read_screen(&api, &pane)), 12); // its words, not its frames
         if is_auth_failure(&screen) {
             g.set(&keep)?;
+            crate::store::quota::note(&crate::store::quota::group_of(&k), crate::store::quota::LOGIN, &screen, 0, id);
             if hand_over(id, g, "logged out", "")? { return Ok(()); }
             let mut f = failure("agent", "Needs a login", &screen, ""); f.put("auth", true); f.put("msg", "Needs a login"); f.del("next");
             fail(g, f, FailHow::default())?;
@@ -252,6 +258,8 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
         return Ok(());
     }
     if t.b("cutRetry") { g.set(|t| t.put("cutRetry", Value::Null))?; } // the turn ended by itself: a later cut-off counts again
+    // It answered: nothing is known against this subscription any more (store/quota.rs).
+    crate::store::quota::release(&crate::store::quota::group_of(&k));
     let said = if finished { turn.as_ref().map(|x| x.said.clone()).unwrap_or_default() } else if let Some(n) = &fresh_note { n.1.clone() } else { t.t("said") };
     if let Some(n) = &fresh_note { let _ = std::fs::write(dir_of(id).join("closing.md"), format!("{}\n", n.1)); }
     let agent_session = a.as_ref().map(|a| a.at("agent_session").t("value")).unwrap_or_default();

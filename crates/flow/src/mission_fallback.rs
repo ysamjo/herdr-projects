@@ -31,8 +31,13 @@ pub fn tick_one(co: &Co) -> Res<()> {
     let order = crate::mission_control::parse_priority(&crate::mission_control::priority())?;
     let run = c.at("run");
     let on = if run.b("model") { format!("{}/{}", run.s("kind"), run.s("model")) } else { run.t("kind") };
+    // What this subscription is known to be, for every project and every model of it (store/quota.rs).
+    let state = if crate::store::failures::is_auth_failure(&error) { crate::store::quota::LOGIN }
+        else if crate::store::quota::out_of_allowance(&error) { crate::store::quota::EXHAUSTED } else { crate::store::quota::DEGRADED };
+    crate::store::quota::note(&crate::store::quota::group_of_agent(&on), state, &error, crate::store::quota::reset_ms(&error, crate::clock::now()), co.repo().unwrap_or(""));
     let at = order.iter().position(|s| s == &on).unwrap_or(0);
-    let next = order.iter().skip(at + 1).find(|s| crate::agents::installed::installed(&crate::store::settings::values::agent_of(s).kind));
+    // Nothing of a subscription that is out of allowance or needs a login: another model of it is the same budget.
+    let next = order.iter().skip(at + 1).find(|s| crate::store::quota::rank(s) < 2 && crate::agents::installed::installed(&crate::store::settings::values::agent_of(s).kind));
     let Some(next) = next else { return Ok(()) };
     let file = state::dir_of(co).join(format!("handover-{}.json", crate::clock::now()));
     write_json(&file, &Value::Object(c.clone()))?;

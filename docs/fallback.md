@@ -37,6 +37,9 @@ The working agent **cannot go on** in three cases:
 So for one turn that ends badly, the order is: **the board's own tries (only for an error that passes) → the next agent
 on `worker.fallback` → you.**
 
+What is known about the allowance behind each program is kept for the whole machine, so a hand-over to another model of
+the same subscription does not land in the same empty budget: [what is known about each allowance](quota.md).
+
 **Not handed over**, as before: when the agent stops and says it waits for you, when it stops without a summary, when you
 stop it, for a conflict with main or feedback on its pull request, or while a merge you approved is being repaired.
 Those are yours.

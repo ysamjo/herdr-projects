@@ -55,7 +55,9 @@ reviewer stopped:" and the error; that, too, is not on the list of reviews.
 
 With `worker.fallback` or `reviewer.fallback` set, another agent takes over where the board would otherwise give up or go
 to you: after the last try, for an error that passes; at once, for one that waiting cannot fix. So the order is: **the
-tries first, then the fallback, then you** ([the fallback agent](fallback.md)).
+tries first, then the fallback, then you** ([the fallback agent](fallback.md)). What a turn ended with is also written
+down for the whole machine, so the next task passes over a subscription that is out of allowance or needs a login
+([what is known about each allowance](quota.md)).
 
 ## Details
 
