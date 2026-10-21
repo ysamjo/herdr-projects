@@ -35,6 +35,7 @@ pub mod land;
 pub mod limits;
 pub mod notify;
 pub mod plan;
+pub mod project;
 pub mod remote;
 pub mod review_page;
 pub mod runner;

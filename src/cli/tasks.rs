@@ -121,6 +121,7 @@ pub fn command(cmd: &str, a: &Args) -> Res<(Value, String)> {
             settings_command(cmd, pos, &w, if pos.len() > 2 { Some(json!(rest(2))) } else { None })?
         }
         "models" => crate::agents::models::say::models_command(&pos.get(1).cloned().unwrap_or_default())?,
+        "project" | "projects" => crate::cli::projects::command(a)?,
         "automations" | "automation" => crate::automations::command::automations_command(&pos[1..], flags, &here)?,
         "coordinator" => coordinator(a, &here)?,
         "machines" => { let r = crate::remote::check::check(20000); let s = crate::remote::check::say(&r); (r, s) }

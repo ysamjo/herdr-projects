@@ -8,7 +8,7 @@ use crate::store::settings_list::SETTINGS;
 
 /// Positional arguments, flags (`--flag value`, `--flag` true, `--no-flag` false), and each flag as it was typed.
 pub struct Args { pub pos: Vec<String>, pub flags: Obj, pub typed: Obj }
-const BOOL: [&str; 13] = ["json", "archived", "all", "delegate", "force", "help", "skill", "research", "every-repo", "anyway", "now", "clear", "machine"];
+const BOOL: [&str; 14] = ["json", "archived", "all", "delegate", "force", "help", "skill", "research", "every-repo", "anyway", "now", "clear", "machine", "public"];
 pub fn parse(argv: &[String]) -> Args {
     let (mut pos, mut flags, mut typed) = (vec![], Obj::new(), Obj::new());
     let mut i = 0;
@@ -63,6 +63,7 @@ fn takes(cmd: &str, sub: &str) -> Option<Takes> {
         "models" => f(&[]),
         "automations" | "automation" => match sub { "add" | "new" => s(AUTO_ADD), "change" | "edit" => f(AUTO_CHANGE), _ => f(&[]) },
         "coordinator" => match sub { "tell" => f(&["delegate", "machine", "project"]), "new" | "fresh" => f(&["agent", "effort", "machine", "project"]), _ => f(&["machine", "project"]) },
+        "project" | "projects" => match sub { "add" => f(&["into"]), "create" => f(&["github", "public", "into"]), "set" => f(&["repo"]), _ => f(&[]) },
         "machines" | "web-ui" | "remove-extras" | "reopen" | "version" | "install" | "update" | "doctor" => f(&[]),
         "voice" => f(&["from"]),
         "housekeep" => f(&["pr"]),
@@ -70,7 +71,7 @@ fn takes(cmd: &str, sub: &str) -> Option<Takes> {
         _ => return None,
     })
 }
-fn has_subs(cmd: &str) -> bool { ["automations", "automation", "coordinator"].contains(&cmd) }
+fn has_subs(cmd: &str) -> bool { ["automations", "automation", "coordinator", "project", "projects"].contains(&cmd) }
 /// The flags of a command that it does not know, as typed. A name with a dot is a setting where settings are taken.
 pub fn unknown_flags(cmd: &str, flags: &Obj, typed: &Obj, sub: &str) -> Vec<String> {
     let Some(t) = takes(cmd, sub) else { return vec![] };

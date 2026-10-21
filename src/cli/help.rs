@@ -14,6 +14,19 @@ pub const HELP: &str = r#"herdr-projects: a work board for herdr
                                        nothing in the repo; the result is a report. --no-research: not research only,
                                        where a default says it is)
   herdr-projects list [--archived] [--all] [--query TEXT] [--json]
+  herdr-projects project add <owner/name|URL> [--into DIR]
+                                      a GitHub repository that exists becomes a project here: cloned into the projects
+                                      folder (~/Developer, or --into), known by its name, its repository written down
+  herdr-projects project create <name> [--github owner/name] [--public] [--into DIR]
+                                      a new project with its own repository: a checkout with one commit, the repository
+                                      on GitHub (private unless --public; yours unless --github says another), the
+                                      remote here. Pushing, the pull request and the merge stay separate steps, each
+                                      with its own state on the task
+  herdr-projects project set <owner/name> [--repo NAME]
+                                      say which repository a project that already exists is: the one of the folder you
+                                      are in, or --repo. A push that would go to another repository is stopped
+  herdr-projects project list         every project, its repository, and where its checkout really pushes
+                                      (a difference is shown, never guessed away)
   herdr-projects report <id> --state idle|working|blocked|done|error [--kind question|permission|auth] [--msg TEXT] [--title TEXT]
                          [--progress 0-100] [--eta MINUTES]   (your own task, with --state working: how far, and minutes left)
   herdr-projects describe <id> <text>          write or replace a task's description

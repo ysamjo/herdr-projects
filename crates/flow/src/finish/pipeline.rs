@@ -176,6 +176,10 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
         let pushed = (|| -> Res<Option<String>> {
             let has_commits = git_out(tp, &["rev-list", "--count", &format!("{base}..HEAD")])?.parse::<i64>().unwrap_or(0) > 0;
             if !(has_commits && flow::git::has_origin(&root)) { return Ok(None); }
+            // A project whose checkout drifted to another repository would push the work into the wrong one: stopped
+            // here, before anything leaves this machine (store/github.rs).
+            let elsewhere = crate::store::github::elsewhere(t.s("repo"));
+            if !elsewhere.is_empty() { return Err(crate::err::Error::new(format!("elsewhere:{elsewhere}"))); }
             t = g.set(|t| { t.put("stage", "pushing"); t.put("msg", "Pushing the branch"); })?;
             // The branch is the board's own and an agent may have rebuilt it: overwrite what was pushed before, but only
             // while the remote still holds what was last seen here.
@@ -212,6 +216,12 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
             Ok(Some(url)) => note = format!(" Pull request: {url}"),
             Ok(None) => {}
             Err(e) if is_aborted(&e) => return Err(e),
+            // The project is another repository than the one this checkout pushes to: nothing was pushed (store/github.rs).
+            Err(e) if e.msg.starts_with("elsewhere:") => {
+                let why = format!("{}\n\nNothing was pushed and no pull request was opened.", &e.msg["elsewhere:".len()..]);
+                fail(g, failure("push", "The checkout pushes to another repository", &why, "Say which repository this project is (herdr-projects project set <owner/name> --repo <repo>), or point the checkout's origin at it (git remote set-url origin <url>). Then finish again."), FailHow::default())?;
+                return Ok(());
+            }
             Err(_) if already::archived(Path::new(&tree)) => { fail(g, already::archived_failure(t.s("branch"), &tree), FailHow::default())?; return Ok(()); }
             Err(e) if e.msg.starts_with("prbase:") => { fail(g, failure("pr", "The agent's pull request merges into another branch", &format!("Branch: {}\nFolder: {tree}\n\n{}", t.s("branch"), &e.msg[7..]), &format!("Change that pull request's base to {0} (gh pr edit <number> --base {0}), or close it, then finish again. The board goes on with it once it merges into {0}.", sync::main_branch(&root, &t))), FailHow::default())?; return Ok(()); }
             // The remote cannot be reached (main could not be fetched either): it waits, and goes on by itself.
