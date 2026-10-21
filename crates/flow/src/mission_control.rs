@@ -81,6 +81,11 @@ pub fn selected_folder(socket: &str) -> Option<PathBuf> {
         return path.is_dir().then(|| std::fs::canonicalize(&path).unwrap_or(path));
     }
     let layout = crate::mission_layout::state(socket);
+    let focused = Herdr::new(Some(socket.into())).workspaces().ok().and_then(|spaces| spaces.into_iter().find(|w| w.b("focused")));
+    if let Some(project) = focused.and_then(|w| layout.at("projects").as_object()?.values().find(|p| p.s("workspace") == w.s("workspace_id")).cloned()) {
+        let folder = PathBuf::from(project.s("folder"));
+        if folder.is_dir() { return Some(std::fs::canonicalize(&folder).unwrap_or(folder)); }
+    }
     let path: PathBuf = if layout.s("selected").is_empty() {
         layout.at("projects").as_object()?.values().next()?.t("folder").into()
     } else { PathBuf::from(layout.s("selected")) };
@@ -132,6 +137,13 @@ pub fn split_task(api: &Herdr, folder: &Path, cwd: &str, env: &[(String, String)
     })
 }
 pub fn submit(folder: &Path, text: &str, socket: &str) -> Res<()> {
+    if implementation_go(text) {
+        let id = crate::mission_conclusion::latest(folder).t("task");
+        return crate::mission_conclusion::approve(folder, &id, socket);
+    }
+    submit_report(folder, text, socket, None)
+}
+pub fn submit_report(folder: &Path, text: &str, socket: &str, report_id: Option<&str>) -> Res<()> {
     if text.trim().is_empty() { crate::fail!("Bitte einen Task eingeben.") }
     if !folder.is_dir() { crate::fail!("Der Projektordner ist nicht mehr vorhanden: {}", folder.display()) }
     let co = project_coordinator(&folder, socket)?;
@@ -145,8 +157,11 @@ pub fn submit(folder: &Path, text: &str, socket: &str) -> Res<()> {
         .map(|t| format!("{}: {} ({})", t.s("id"), t.s("title"), t.s("stage"))).collect();
     let approved_report = implementation_go(text).then(|| crate::store::tasks::list(Default::default()).into_iter()
         .filter(|t| crate::store::repos::folder_of(t.s("id")) == folder && crate::research::is_research(t)
-            && t.s("stage") == "done" && t.s("missionImplementationApproval") == "pending" && t.at("report").is_object())
+            && t.s("stage") == "done" && t.s("missionImplementationApproval") == "pending" && t.at("report").is_object()
+            && report_id.map(|id| id == t.s("id")).unwrap_or(true))
         .max_by(|a, b| a.f("created").partial_cmp(&b.f("created")).unwrap_or(std::cmp::Ordering::Equal)));
+    if implementation_go(text) && report_id.is_none() { crate::fail!("Bitte einen konkreten Rechercheauftrag freigeben.") }
+    if let Some(id) = report_id { crate::mission_conclusion::validate(&folder, id)?; }
     if implementation_go(text) && approved_report.as_ref().and_then(|t| t.as_ref()).is_none() {
         crate::fail!("Für dieses Projekt gibt es keinen abgeschlossenen Recherchebericht, der auf dein Go wartet.")
     }
@@ -200,6 +215,7 @@ fn show_once(focus: bool) -> Res<()> {
             let p = match p { Some(p) => p, None => { let r = api.tab_create(&workspace, &path, "Mission Control", &board_env())?; r.at("root_pane").clone() } };
             (workspace, p)
         };
+        let pane = crate::mission_view::dock(&api, &project.path, pane)?;
         let pane_id = pane.t("pane_id");
         crate::mission_layout::prepare_project(&socket, &path, &workspace, &pane_id)?;
         if crate::mission_layout::project_anchor(&socket, &path).as_deref() != Some(&pane_id) {
@@ -256,6 +272,9 @@ pub fn task_folder(folder: &Path, repo: &str, pane: &str, socket: &str) -> Res<P
     if pane.is_empty() || !is_active(socket) { return Ok(requested); }
     let Some(co) = state::all(socket).into_iter().find(|co| state::get(co).map(|c| c.s("pane") == pane).unwrap_or(false)) else { return Ok(requested) };
     let co = state::get(&co).unwrap_or_default();
+    if co.arr("where").last().map(|m| m.s("said").starts_with("[MISSION-CONTROL-RESEARCH-RESULT]")).unwrap_or(false) {
+        crate::fail!("Die Recherche wartet auf das Go des Menschen. Vor der Freigabe werden keine Umsetzungstasks angelegt.")
+    }
     let Some(message) = co.arr("where").last().filter(|m| m.s("said").starts_with("[MISSION-CONTROL-PROJEKT]") || m.s("said").starts_with("[MISSION-CONTROL-UMSETZUNG-FREIGEGEBEN]")) else { return Ok(requested) };
     let root = PathBuf::from(message.s("root"));
     if !repo.is_empty() && crate::store::repos::primary_root(&requested) != crate::store::repos::primary_root(&root) {

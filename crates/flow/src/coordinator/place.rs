@@ -79,7 +79,7 @@ pub fn open_tab(api: &Herdr, co: &Co, env: &[(String, String)]) -> Res<Value> {
         if mission_project {
             let folder = home(co).display().to_string();
             let Some(control) = crate::mission_layout::project_anchor(&co.socket, &folder) else { crate::fail!("Der Projekt-Space {} hat kein Taskfeld-Pane.", co.name()); };
-            pane = Some(api.pane_split(&control, &home(co).display().to_string(), "right", env)?);
+            pane = Some(crate::mission_view::split_coordinator(api, &control, &home(co).display().to_string(), env)?);
         } else {
             let r = api.tab_create(&space, &home(co).display().to_string(), &co.name(), env)?;
             pane = if r.at("root_pane").is_object() { Some(r.at("root_pane").clone()) } else { api.panes(Some(&space))?.into_iter().find(|p| p.s("tab_id") == r.at("tab").s("tab_id")) };

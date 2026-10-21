@@ -102,6 +102,8 @@ fn reviewed_research_report_returns_a_conclusion_and_waits_for_go_before_impleme
     assert!(research_message.contains("nichts umgesetzt"));
     assert!(research_message.contains("Go für Umsetzung"));
     assert_eq!(task(&id).s("missionImplementationApproval"), "pending");
+    assert!(sw::mission_control::submit(&w.root, "Go für Umsetzung", &w.socket).is_err());
+    sw::store::files::write_json(&sw::mission_conclusion::file(&task(&id)), &json!({"task":id,"conclusion":"Drei Änderungen helfen.","findings":["Befund"],"proposal":"Begrenzte Umsetzung", "questions":[]})).unwrap();
     sw::mission_control::submit(&w.root, "Go für Umsetzung", &w.socket).unwrap(); drain();
     let implementation = prompts(&w, &pane).last().unwrap().clone();
     assert!(implementation.contains("[MISSION-CONTROL-UMSETZUNG-FREIGEGEBEN]"));

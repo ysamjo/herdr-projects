@@ -1,6 +1,8 @@
 //! A project's own Herdr Space: fixed project identity, persistent task composer, and visible CLI panes.
 pub mod draw;
 pub mod events;
+pub mod controls;
+pub mod conclusion;
 pub mod worker;
 use crate::board::textbox::TextBox;
 use crate::json::*;
@@ -16,6 +18,7 @@ pub struct State {
     pub draft: TextBox, pub order: TextBox, pub priority: bool, pub sidebar: bool, pub sending: bool,
     pub notice: String, pub error: String, pub coordinator: Value, pub drafts: HashMap<String, String>,
     pub folders_rect: Rect, pub input_rect: Rect, pub send_rect: Rect, pub priority_rect: Rect, pub refresh_rect: Rect,
+    pub conclusion: Value, pub expanded: bool, pub summary_scroll: u16, pub controls: Vec<(Rect, controls::Action)>,
     pub socket: String, pub tx: Sender<worker::Command>, pub closed_at: Option<Instant>,
 }
 impl State {
@@ -57,7 +60,8 @@ pub fn open() -> crate::err::Res<i32> {
     let pinned = std::env::var("HERDR_CONTROL_PROJECT_PATH").ok().filter(|p| std::path::Path::new(p).is_dir());
     if let Some(folder) = &pinned {
         let current = crate::herdr::Herdr::new(Some(socket.clone())).pane_get(&pane).unwrap_or_default();
-        crate::mission_layout::register_project(&socket, folder, current.s("workspace_id"), &pane)?;
+        crate::mission_layout::register_project(&socket, folder, current.s("workspace_id"), current.s("pane_id"))?;
+        crate::herdr::Herdr::new(Some(socket.clone())).metadata(current.s("pane_id"), &["--title".into(), format!("Task / Fazit · {}", std::path::Path::new(folder).file_name().unwrap_or_default().to_string_lossy())]);
     } else { crate::mission_layout::register(&socket, &pane)?; }
     let drafts: HashMap<String, String> = crate::store::files::read_json(&draft_file()).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     let (tx, commands) = channel(); let (updates, rx) = channel();
@@ -69,6 +73,7 @@ pub fn open() -> crate::err::Res<i32> {
         projects: vec![], project: ListState::default(), draft: TextBox::default(), order: TextBox::default(),
         priority: false, sidebar: true, sending: false, notice: "Projektordner werden geladen …".into(), error: String::new(), coordinator: Value::Null, drafts,
         folders_rect: Rect::default(), input_rect: Rect::default(), send_rect: Rect::default(), priority_rect: Rect::default(), refresh_rect: Rect::default(),
+        conclusion: Value::Null, expanded: false, summary_scroll: 0, controls: vec![],
         socket, tx, closed_at: None,
     };
     if let Some(path) = pinned {

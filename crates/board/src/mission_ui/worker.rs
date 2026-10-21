@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, RecvTimeoutError};
 use std::time::Duration;
 
-pub enum Command { Refresh, Submit(PathBuf, String), Priority(String) }
-pub enum Update { Folders(Vec<Project>), Snapshot(Value), Sent(PathBuf, String), Applied(String), Error(String) }
+pub enum Command { Refresh, Submit(PathBuf, String), Priority(String), Approve(PathBuf, String), Conclusion(String), Focus(String), Mobile(bool), Fold }
+pub enum Update { Notice(String), Folders(Vec<Project>), Snapshot(Value, Value), Approved(String), Sent(PathBuf, String), Applied(String), Error(String) }
 pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update>) {
     std::thread::spawn(move || {
         crate::flow::send::shim();
@@ -21,6 +21,24 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
                     Ok(()) => { let _ = updates.send(Update::Sent(folder, text)); }
                     Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
                 },
+                Ok(Command::Approve(folder, id)) => match crate::mission_conclusion::approve(&folder, &id, &socket) {
+                    Ok(()) => { let _ = updates.send(Update::Approved(id)); }
+                    Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
+                },
+                Ok(Command::Conclusion(id)) => {
+                    if let Some(folder) = crate::mission_control::selected_folder(&socket) {
+                        match crate::mission_conclusion::request(&folder, &id, &socket, true) {
+                            Ok(()) => { let _ = updates.send(Update::Notice("Fazit beim Orchestrator angefordert".into())); }
+                            Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
+                        }
+                    }
+                },
+                Ok(Command::Focus(target)) => view(&socket, &updates, |folder| crate::mission_view::focus(&socket, folder, &target)),
+                Ok(Command::Mobile(enabled)) => view(&socket, &updates, |folder| crate::mission_view::mobile(&socket, folder, enabled)),
+                Ok(Command::Fold) => view(&socket, &updates, |folder| {
+                    if crate::mission_view::preferences(&socket, folder).b("mobile") { crate::mission_view::focus(&socket, folder, "orchestrator") }
+                    else { crate::mission_view::command("tiles") }
+                }),
                 Ok(Command::Priority(text)) => match crate::mission_control::apply_priority(&text) {
                     Ok(primary) => { let _ = crate::coordinator::state::change(socket.as_str(), |s| { s.put("controlPriority", ""); true }); let _ = updates.send(Update::Applied(primary)); }
                     Err(e) => { let _ = updates.send(Update::Error(e.msg)); }
@@ -33,10 +51,25 @@ pub fn start(socket: String, commands: Receiver<Command>, updates: Sender<Update
             if !crate::keeper::keeper_alive() { crate::keeper::tick_once(&socket, false); }
             let tasks = crate::store::tasks::list(Default::default());
             crate::mission_agents::sync(&tasks, &socket);
-            let coordinator = crate::mission_control::selected_summary(socket.as_str());
-            if updates.send(Update::Snapshot(coordinator)).is_err() { break; }
+            let mut coordinator = crate::mission_control::selected_summary(socket.as_str());
+            let mut conclusion = Value::Null;
+            if let Some(folder) = crate::mission_control::selected_folder(&socket) {
+                if let Err(e) = crate::mission_view::auto(&socket, &folder) { let _ = updates.send(Update::Error(e.msg)); }
+                let co = crate::mission_control::project_coordinator(&folder, &socket);
+                if let Ok(co) = co { coordinator["selection"] = crate::mission_status::coordinator(&co); }
+                coordinator["mobile"] = json!(crate::mission_view::preferences(&socket, &folder).b("mobile"));
+                coordinator["terminals"] = json!(crate::mission_view::terminals(&socket, &folder));
+                conclusion = crate::mission_conclusion::latest(&folder);
+                if let Err(e) = crate::mission_conclusion::ensure(&folder, &socket, &conclusion) { let _ = updates.send(Update::Error(e.msg)); }
+            }
+            if updates.send(Update::Snapshot(coordinator, conclusion)).is_err() { break; }
         }
     });
+}
+fn view(socket: &str, updates: &Sender<Update>, action: impl FnOnce(&std::path::Path) -> crate::err::Res<()>) {
+    if let Some(folder) = crate::mission_control::selected_folder(socket) {
+        if let Err(e) = action(&folder) { let _ = updates.send(Update::Error(e.msg)); }
+    }
 }
 fn refresh(updates: &Sender<Update>) {
     match crate::mission_projects::scan(&crate::mission_projects::root()) {
@@ -49,15 +82,20 @@ fn refresh(updates: &Sender<Update>) {
 }
 pub fn receive(s: &mut State, update: Update) {
     match update {
+        Update::Notice(notice) => { s.notice = notice; s.error.clear(); }
         Update::Folders(folders) => {
             let wanted = s.folder().map(|p| p.path.display().to_string()).unwrap_or_else(|| crate::mission_layout::state(&s.socket).t("selected"));
             s.save_draft();
             s.projects = folders;
             let index = s.projects.iter().position(|p| p.path.display().to_string() == wanted).unwrap_or(0);
             s.project.select(None); s.choose(index);
-            s.notice = format!("{} Projektordner · auswählen, Task eingeben, senden", s.projects.len());
+            s.notice = "Task eingeben und senden".into();
         }
-        Update::Snapshot(coordinator) => { s.coordinator = coordinator; }
+        Update::Snapshot(coordinator, conclusion) => {
+            if s.conclusion.s("task") != conclusion.s("task") { s.summary_scroll = 0; }
+            s.coordinator = coordinator; s.conclusion = conclusion;
+        }
+        Update::Approved(id) => { s.sending = false; s.error.clear(); s.notice = format!("Umsetzung für {id} freigegeben"); }
         Update::Sent(folder, text) => {
             s.sending = false;
             let path = folder.display().to_string();

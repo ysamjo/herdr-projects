@@ -1,6 +1,6 @@
 id = "herdr-control"
 name = "Herdr Control"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.5"
 description = "Mission Control: Projekte, Task-Eingabe und sichtbare CLI-Orchestrierung"
 platforms = ["macos", "linux"]
@@ -18,3 +18,28 @@ command = ["sh", "scripts/control.sh"]
 
 [[startup]]
 command = ["sh", "scripts/open.sh", "control-startup"]
+
+[[actions]]
+id = "input"
+title = "Task eingeben / Fazit lesen"
+command = ["sh", "scripts/action.sh", "control-input"]
+
+[[actions]]
+id = "orchestrator"
+title = "Orchestrator zeigen"
+command = ["sh", "scripts/action.sh", "control-orchestrator"]
+
+[[actions]]
+id = "next"
+title = "Nächstes Agent-Terminal"
+command = ["sh", "scripts/action.sh", "control-next"]
+
+[[actions]]
+id = "mobile"
+title = "Mobiler Fokusmodus"
+command = ["sh", "scripts/action.sh", "control-mobile"]
+
+[[actions]]
+id = "tiles"
+title = "Alle Terminal-Panes kacheln"
+command = ["sh", "scripts/action.sh", "control-tiles"]

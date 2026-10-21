@@ -29,13 +29,13 @@ impl Fake for FakeHerdr {
 }
 impl FakeHerdr {
     pub fn ws_out(st: &Value, w: &Value) -> Value {
-        let mut o = json!({ "workspace_id": w.at("workspace_id"), "label": w.at("label"), "focused": st.arr("focus").iter().rev().filter_map(Value::as_str).find(|f| f.starts_with("workspace ")).map(|f| f == format!("workspace {}", w.s("workspace_id"))).unwrap_or(false), "pane_count": st.arr("panes").iter().filter(|p| p.at("workspace_id") == w.at("workspace_id")).count() });
+        let mut o = json!({ "workspace_id": w.at("workspace_id"), "label": w.at("label"), "focused": st.arr("focus").iter().rev().filter_map(Value::as_str).find(|f| f.starts_with("workspace ")).map(|f| f == format!("workspace {}", w.s("workspace_id"))), "pane_count": st.arr("panes").iter().filter(|p| p.at("workspace_id") == w.at("workspace_id")).count() });
         if w.at("worktree").is_object() { o["worktree"] = w.at("worktree").clone(); }
         o
     }
     pub fn tab_out(st: &Value, t: &Value) -> Value { json!({ "tab_id": t.at("tab_id"), "workspace_id": t.at("workspace_id"), "label": t.at("label"), "pane_count": st.arr("panes").iter().filter(|p| p.at("tab_id") == t.at("tab_id")).count(), "focused": t.s("tab_id") == format!("{}:t1", t.s("workspace_id")) }) }
     pub fn pane_out(p: &Value) -> Value {
-        let mut o = json!({ "pane_id": p.at("pane_id"), "workspace_id": p.at("workspace_id"), "tab_id": p.at("tab_id"), "terminal_id": p.at("terminal_id"), "cwd": p.at("cwd"), "foreground_cwd": p.at("cwd"),
+        let mut o = json!({ "pane_id": p.at("pane_id"), "workspace_id": p.at("workspace_id"), "tab_id": p.at("tab_id"), "terminal_id": p.at("terminal_id"), "cwd": p.at("cwd"), "foreground_cwd": p.at("cwd"), "focused":p.b("focused"),
             "agent": if p.at("agent").is_object() { p.at("agent").at("kind").clone() } else { Value::Null }, "agent_status": if p.at("agent").is_object() { p.at("agent").at("status").clone() } else { json!("unknown") } });
         if p.b("display_agent") { o["display_agent"] = p.at("display_agent").clone(); }
         o

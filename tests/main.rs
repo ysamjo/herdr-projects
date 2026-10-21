@@ -5,6 +5,7 @@ mod common;
 mod far;
 mod mission_control;
 mod mission_control_spaces;
+mod mission_control_ux;
 mod move_home;
 mod review_kit;
 mod takeover_kit;

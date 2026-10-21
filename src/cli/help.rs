@@ -3,6 +3,11 @@ pub const HELP: &str = r#"herdr-projects: a work board for herdr
 
   herdr-projects                     open the board here (in herdr: bind a key to the plugin action "open")
   herdr-projects control-open            Mission Control öffnen: Projektordner, Task-Eingabe und sichtbare CLI-Panes
+  herdr-projects control-input           Task eingeben oder gespeichertes Fazit lesen
+  herdr-projects control-orchestrator    Orchestrator im ausgewählten Projekt anzeigen
+  herdr-projects control-next            zum nächsten vorhandenen Agent-Terminal wechseln
+  herdr-projects control-mobile          mobilen Fokusmodus aktivieren
+  herdr-projects control-tiles           Terminal-Panes wieder gekachelt anzeigen
   herdr-projects board-open              das klassische Board öffnen
   herdr-projects add <title> [--desc TEXT] [--repo NAME|PATH] [--delegate] [--after ID[,ID…]] [--<setting> VALUE ...] [--research|--no-research]
                                       (--research: research only, short for --research.only true. Its agent changes

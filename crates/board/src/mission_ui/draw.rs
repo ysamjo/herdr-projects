@@ -1,44 +1,42 @@
-//! One project's fixed-space task input and coordinator status.
-use super::State;
+//! A compact bottom task composer; full-screen input shows saved conclusions without duplicating task lists.
+use super::{State, controls};
 use crate::board::keys::key_name;
 use crate::board::textbox::TextBox;
 use crate::json::*;
-use ratatui::{Frame, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph}};
+use ratatui::{Frame, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Style}, text::Line, widgets::{Block, Borders, Paragraph}};
 
-fn block(title: impl Into<String>) -> Block<'static> { Block::default().borders(Borders::ALL).title(title.into()).border_style(Style::default().fg(Color::DarkGray)) }
+fn block(title: impl Into<String>) -> Block<'static> { Block::default().borders(Borders::ALL).title(title.into()).border_style(Style::default().fg(Color::Cyan)) }
 pub fn draw(f: &mut Frame, s: &mut State) {
     let area = f.area();
+    s.controls.clear(); s.folders_rect = Rect::default(); s.send_rect = Rect::default(); s.priority_rect = Rect::default(); s.refresh_rect = Rect::default();
+    let full = s.expanded || s.priority || area.height > 12;
+    let narrow = area.width < 80;
+    let height = if full { area.height } else { area.height.min(if narrow { 9 } else { 7 }) };
+    let strip = Rect::new(area.x, area.bottom().saturating_sub(height), area.width, height);
     let chunks = Layout::default().direction(Direction::Vertical).constraints([
-        Constraint::Length(4), Constraint::Min(6), Constraint::Length(3), Constraint::Length(3),
-    ]).split(area);
-    let actual = if s.coordinator.b("agent") { s.coordinator.s("agent") } else { "wird gestartet" };
-    let status = match s.coordinator.s("state") { "none" => "noch nicht gestartet", "starting" => "startet", "working" => "arbeitet", "blocked" => "wartet auf Antwort", "idle" => "bereit", "exited" => "beendet", other => other };
-    let queued = s.coordinator.i("queued");
-    let selected = crate::mission_control::priority().split(',').next().unwrap_or("").to_string();
-    let header = vec![
-        Line::from(Span::styled("MISSION CONTROL", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-        Line::from(format!("Orchestrator: {actual} · {status} · {queued} warten   |   Priorität 1: {selected}")),
-        Line::from(format!("Space: {} · Orchestrator und Worker laufen als sichtbare Terminal-Panes", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt"))),
-    ];
+        Constraint::Length(1), Constraint::Length(if narrow { 2 } else { 1 }), Constraint::Min(1), Constraint::Length(if narrow { 2 } else { 1 }), Constraint::Length(1),
+    ]).split(strip);
+    let actual = if s.coordinator.b("agent") { s.coordinator.s("agent") } else { "startet" };
+    let status = match s.coordinator.s("state") { "none" | "starting" => "startet", "working" => "arbeitet", "blocked" => "wartet auf dich", "idle" => "bereit", "exited" => "beendet", other => other };
+    let header = format!("Space: {} · {actual} · {status}", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt"));
     f.render_widget(Paragraph::new(header), chunks[0]);
-    s.folders_rect = Rect::default();
-    let project = s.folder().cloned();
-    let title = if s.priority { "Globale CLI-Reihenfolge · erste CLI = Orchestrator".into() } else { format!("Task für {}", project.as_ref().map(|p| p.name.as_str()).unwrap_or("Projekt")) };
-    let input_block = block(title).border_style(Style::default().fg(if s.sidebar && !s.priority { Color::DarkGray } else { Color::Cyan }));
-    s.input_rect = input_block.inner(chunks[1]);
-    f.render_widget(input_block, chunks[1]);
+    controls::row(f, s, chunks[1], controls::navigation(s));
+    let input = if full && !s.priority {
+        let rows = (s.draft.visual(area.width.saturating_sub(3).max(1) as usize).len() as u16 + 2).clamp(3, 10);
+        let parts = Layout::vertical([Constraint::Min(1), Constraint::Length(rows)]).split(chunks[2]);
+        super::conclusion::draw(f, s, parts[0]); parts[1]
+    } else { chunks[2] };
+    let title = if s.priority { "CLI-Reihenfolge · erste CLI orchestriert".into() } else { format!("Task für {}", s.folder().map(|p| p.name.as_str()).unwrap_or("Projekt")) };
+    let b = block(title); s.input_rect = b.inner(input); f.render_widget(b, input);
     let rect = s.input_rect;
-    let focused = true;
-    if s.priority { editor(f, &mut s.order, rect, true); } else { editor(f, &mut s.draft, rect, focused); }
-    let buttons = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(22), Constraint::Min(10)]).split(chunks[2]);
-    s.send_rect = buttons[0]; s.priority_rect = buttons[1]; s.refresh_rect = Rect::default();
-    let send = if s.priority { "Reihenfolge anwenden" } else if s.sending { "Wird übergeben …" } else { "Task senden ↵" };
-    for (rect, text) in [(buttons[0], send), (buttons[1], "CLI-Reihenfolge")] { f.render_widget(Paragraph::new(text).block(block("")).style(Style::default().fg(Color::Cyan)), rect); }
-    let sync = project.as_ref().map(|p| if p.remote.is_empty() { "Lokaler Ordner · kein Git-Remote; GitHub-Sync erst nach Repository-Einrichtung".into() } else { format!("Git-Sync nach erfolgreicher Prüfung: {}", p.remote) }).unwrap_or_default();
-    let note = if !s.error.is_empty() { s.error.clone() } else { s.notice.clone() };
-    let tip = format!("{} Task senden · {} neue Zeile · {} Reihenfolge", key_name("enter"), key_name("newline"), key_name("settings"));
-    let foot = vec![Line::from(Span::styled(note, Style::default().fg(if s.error.is_empty() { Color::Gray } else { Color::Red }))), Line::from(sync), Line::from(tip)];
-    f.render_widget(Paragraph::new(foot), chunks[3]);
+    if s.priority { editor(f, &mut s.order, rect, true); } else { editor(f, &mut s.draft, rect, true); }
+    let choices = if s.priority { vec![("Anwenden".into(), controls::Action::Send), ("Zurück".into(), controls::Action::Priority)] } else { controls::actions(s) };
+    controls::row(f, s, chunks[3], choices);
+    let note = if !s.error.is_empty() { s.error.clone() }
+        else if !s.notice.is_empty() && s.notice != "Task eingeben und senden" { s.notice.clone() }
+        else if !s.coordinator.at("selection").s("reason").is_empty() { s.coordinator.at("selection").t("reason") }
+        else { format!("{} senden · {} neue Zeile · {} CLI", key_name("enter"), key_name("newline"), key_name("settings")) };
+    f.render_widget(Paragraph::new(note).style(Style::default().fg(if s.error.is_empty() { Color::Gray } else { Color::Red })), chunks[4]);
 }
 fn editor(f: &mut Frame, box_: &mut TextBox, rect: Rect, focus: bool) {
     let width = rect.width.saturating_sub(1).max(1) as usize;

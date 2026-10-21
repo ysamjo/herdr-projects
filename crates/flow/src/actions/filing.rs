@@ -22,6 +22,9 @@ pub fn add(folder: &Path, title: &str, o: AddOpts) -> Res<Task> {
     if let Some(r) = o.research { own.push((RESEARCH.into(), json!(r))); }
     let folder = crate::mission_control::task_folder(folder, &o.repo, &crate::util::env_val("HERDR_PANE_ID").unwrap_or_default(), &crate::herdr::cli::current_socket())?;
     let t = create(&folder, title, &o.description, None)?;
+    if let Some(request) = crate::mission_requests::inherit(&folder, &crate::util::env_val("HERDR_PANE_ID").unwrap_or_default(), &crate::herdr::cli::current_socket()) {
+        update(t.s("id"), |t| { t.put("missionRequest", request); Ok(Change::Write) })?;
+    }
     // A refused setting adds nothing: the task is taken away again.
     if !own.is_empty() { if let Err(e) = set_many(&own, &Scope::task(&t)) { remove(t.s("id")); return Err(e); } }
     if let Some(a) = crate::automations::told::inherited(&o.from) { update(t.s("id"), |t| { t.put("automation", a); Ok(Change::Write) })?; }

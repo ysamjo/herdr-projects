@@ -42,7 +42,8 @@ pub fn entry_of(t: &Obj, who_is: &str, now: i64) -> Entry {
     let eta = if f.eta.text().is_empty() { String::new() } else { left(r.i("eta")) };
     // The row's time, by the minute: herdr shows what it was last told, so seconds would be a write a second.
     let age = if r.b("at") { format!("{}{}", if f.elapsed.ends_with('s') { "<1m".to_string() } else { f.elapsed.clone() }, if f.ago { " ago" } else { "" }) } else { String::new() };
-    Entry { name: task_name(t), place, stands: cut(&words(&stands)), age, line: String::new(), progress: [f.percent.text(), eta].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ") }
+    let entry = Entry { name: task_name(t), place, stands: cut(&words(&stands)), age, line: String::new(), progress: [f.percent.text(), eta].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ") };
+    if t.b("missionRequest") || t.at("link").b("missionPane") { crate::mission_status::decorate(t, entry) } else { entry }
 }
 pub fn reviewer_entry(t: &Obj, now: i64) -> Entry { entry_of(t, who::REVIEWER, now) }
 /// The Coordinator's: its name and where it stands as the line above the board's box says it, and its last message.

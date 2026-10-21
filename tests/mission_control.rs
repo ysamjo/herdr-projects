@@ -191,6 +191,7 @@ fn mission_control_only_draws_projects_and_input_with_tasks_in_the_native_sideba
         project: Default::default(), draft: Default::default(), order: Default::default(), priority: false, sidebar: false, sending: false,
         notice: String::new(), error: String::new(), coordinator: json!({"agent":"agy"}), drafts: Default::default(),
         folders_rect: Default::default(), input_rect: Default::default(), send_rect: Default::default(), priority_rect: Default::default(), refresh_rect: Default::default(),
+        conclusion: serde_json::Value::Null, expanded: false, summary_scroll: 0, controls: vec![],
         socket: w.socket.clone(), tx, closed_at: None,
     };
     s.project.select(Some(0));

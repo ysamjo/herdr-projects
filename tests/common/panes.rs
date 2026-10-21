@@ -42,11 +42,35 @@ pub fn pane(st: &mut Value, verb: &str, arg2: &str, argv: &[String], flag: &dyn 
         "list" => { let w = flag("--workspace"); let ps: Vec<Value> = st.arr("panes").iter().filter(|p| w.as_deref().map(|w| p.s("workspace_id") == w).unwrap_or(true)).map(F::pane_out).collect(); return ok(json!({ "type": "pane_list", "panes": ps })); }
         _ => {}
     }
+    if verb == "swap" {
+        let source = flag("--source-pane").unwrap_or_default(); let target = flag("--target-pane").unwrap_or_default();
+        let layout = st.at("layouts").at(&source).clone();
+        if layout.is_object() {
+            let mut layout = layout;
+            let from = layout.arr("panes").iter().position(|p| p.s("pane_id") == source).unwrap();
+            let to = layout.arr("panes").iter().position(|p| p.s("pane_id") == target).unwrap();
+            let rect = layout["panes"][from]["rect"].clone();
+            layout["panes"][from]["rect"] = layout["panes"][to]["rect"].clone(); layout["panes"][to]["rect"] = rect;
+            let ids: Vec<_> = layout.arr("panes").iter().map(|p| p.t("pane_id")).collect();
+            for id in ids { st["layouts"][&id] = layout.clone(); }
+        }
+        return ok(json!({"type":"pane_swap","swap":{"changed":true}}));
+    }
     let Some(pi) = find(st, arg2) else { return fail("pane_not_found", &format!("pane {arg2} not found")) };
     let p = st["panes"][pi].clone();
     match verb {
         "get" => ok(json!({ "type": "pane_info", "pane": F::pane_out(&p) })),
-        "zoom" => { let on = argv.iter().any(|a| a == "--on"); if on { arr(st, "focus").push(json!(format!("pane {arg2}"))); } ok(json!({ "type": "pane_zoom", "zoom": { "pane_id": arg2, "zoomed": on, "focused_pane_id": arg2 } })) }
+        "zoom" => {
+            let on = argv.iter().any(|a| a == "--on");
+            if on { arr(st, "focus").push(json!(format!("pane {arg2}"))); }
+            for q in st["panes"].as_array_mut().unwrap().iter_mut().filter(|q| q.s("tab_id") == p.s("tab_id")) { q["focused"] = json!(on && q.s("pane_id") == arg2); }
+            if let Some(layouts) = st["layouts"].as_object_mut() {
+                for layout in layouts.values_mut().filter(|l| l.s("tab_id") == p.s("tab_id")) {
+                    layout["zoomed"] = json!(on); if on { layout["focused_pane_id"] = json!(arg2); }
+                }
+            }
+            ok(json!({ "type": "pane_zoom", "zoom": { "pane_id": arg2, "zoomed": on, "focused_pane_id": arg2 } }))
+        }
         "split" => {
             if st.b("paneFails") { return fail("timeout", "timed out"); }
             let wid = p.t("workspace_id");
@@ -55,6 +79,13 @@ pub fn pane(st: &mut Value, verb: &str, arg2: &str, argv: &[String], flag: &dyn 
             let np = st.i("nextP"); st["nextP"] = json!(np + 1);
             let q = json!({ "pane_id": id, "workspace_id": wid, "tab_id": p.at("tab_id"), "terminal_id": format!("term_{np}"), "cwd": flag("--cwd").unwrap_or_else(|| p.t("cwd")), "env": env_of(), "agent": Value::Null });
             arr(st, "panes").push(q.clone());
+            if let Some(ratio) = flag("--ratio").and_then(|r| r.parse::<f64>().ok()) {
+                let cut = (34.0 * ratio) as i64;
+                let layout = json!({"area":{"x":0,"y":0,"width":120,"height":34},"workspace_id":wid,"tab_id":p.at("tab_id"),"zoomed":false,"focused_pane_id":arg2,
+                    "panes":[{"pane_id":arg2,"rect":{"x":0,"y":0,"width":120,"height":cut}},{"pane_id":id,"rect":{"x":0,"y":cut,"width":120,"height":34-cut}}],"splits":[{"direction":"down","ratio":ratio}]});
+                if !st.at("layouts").is_object() { st["layouts"] = json!({}); }
+                st["layouts"][arg2] = layout.clone(); st["layouts"][&id] = layout;
+            }
             ok(json!({ "type": "pane_split", "pane": F::pane_out(&q) }))
         }
         "move" => {

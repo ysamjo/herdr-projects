@@ -1,5 +1,5 @@
 //! Keyboard and mouse actions in Mission Control, using the board's existing key definitions and editor.
-use super::{State, worker::Command};
+use super::{State, worker::Command, controls::{self, Action}};
 use crate::board::keys::{self, K};
 use crossterm::event::{Event, MouseEventKind, MouseButton};
 use std::time::{Duration, Instant};
@@ -13,14 +13,19 @@ pub fn handle(s: &mut State, event: Event) -> bool {
                 if s.closed_at.map(|at| at.elapsed() < Duration::from_secs(2)).unwrap_or(false) { return true; }
                 s.closed_at = Some(Instant::now()); s.notice = "Erneut schließen: Mission Control schließen; laufende Agenten bleiben erhalten".into(); return false;
             }
-            if keys::is(&p, K::Settings) { priority(s); return false; }
+            if keys::is(&p, K::Settings) { controls::act(s, Action::Priority); return false; }
+            if keys::is(&p, K::ChatMessage) { controls::act(s, Action::Conclusion); return false; }
+            if s.expanded && keys::is(&p, K::ChatScrollUp) { s.summary_scroll = s.summary_scroll.saturating_sub(3); return false; }
+            if s.expanded && keys::is(&p, K::ChatScrollDown) { s.summary_scroll = s.summary_scroll.saturating_add(3); return false; }
+            if s.expanded && keys::is(&p, K::Back) { controls::act(s, Action::Conclusion); return false; }
             if s.priority {
-                if keys::is(&p, K::Back) { s.priority = false; }
+                if keys::is(&p, K::Back) { controls::act(s, Action::Priority); }
                 else if keys::is(&p, K::Enter) { let _ = s.tx.send(Command::Priority(s.order.text())); }
                 else { s.order.handle(&p); }
                 return false;
             }
-            if keys::is(&p, K::Delegate) { return false; }
+            if !s.priority && keys::is(&p, K::Back) { s.expanded = false; let _ = s.tx.send(Command::Fold); return false; }
+            if keys::is(&p, K::Delegate) { controls::act(s, Action::Focus("orchestrator".into())); return false; }
             if keys::is(&p, K::Enter) { s.send(); }
             else { s.draft.handle(&p); }
         }
@@ -28,10 +33,10 @@ pub fn handle(s: &mut State, event: Event) -> bool {
             let point = ratatui::layout::Position::new(m.column, m.row);
             match m.kind {
                 MouseEventKind::Down(MouseButton::Left) => {
-                    if s.send_rect.contains(point) { if s.priority { let _ = s.tx.send(Command::Priority(s.order.text())); } else { s.send(); } }
-                    else if s.priority_rect.contains(point) { priority(s); }
-                    else if s.input_rect.contains(point) { }
+                    if let Some((_, action)) = s.controls.iter().find(|(rect, _)| rect.contains(point)).cloned() { controls::act(s, action); }
                 }
+                MouseEventKind::ScrollUp if s.expanded => { s.summary_scroll = s.summary_scroll.saturating_sub(3); }
+                MouseEventKind::ScrollDown if s.expanded => { s.summary_scroll = s.summary_scroll.saturating_add(3); }
                 _ => {}
             }
         }
@@ -39,4 +44,3 @@ pub fn handle(s: &mut State, event: Event) -> bool {
     }
     false
 }
-fn priority(s: &mut State) { s.priority = !s.priority; if s.priority { s.order.set_text(&crate::mission_control::priority()); } }

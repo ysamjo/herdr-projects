@@ -75,6 +75,9 @@ fn run(cmd: &str, a: &Args) -> Res<i32> {
         "open" | "control-open" => { crate::mission_control::show(true)?; return Ok(0); }
         "control-startup" => { crate::mission_control::show(false)?; return Ok(0); }
         "control" => return crate::mission_ui::open(),
+        "control-input" | "control-next" | "control-orchestrator" | "control-mobile" | "control-tiles" => {
+            crate::mission_view::command(cmd.strip_prefix("control-").unwrap())?; return Ok(0);
+        }
         // Into the Coordinator's chat: herdr moves to its real pane, as for any agent. No board in between.
         "open-coordinator" => { if let Err(e) = crate::coordinator::look::go_in(&crate::herdr::cli::current_socket(), 30000) { eprintln!("{}", e.msg); return Ok(1); } return Ok(0); }
         "approve-current" => { approve_current(); return Ok(0); }

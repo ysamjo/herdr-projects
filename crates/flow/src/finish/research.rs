@@ -48,9 +48,10 @@ pub fn mission_result(t: &Task, review: Option<&Value>) {
     let file = r::report_folder(t).join(report.s("file"));
     let review_result = review.map(|r| crate::gate::sentence(r, "accept")).unwrap_or_else(|| "Der Recherche-Task wurde abgeschlossen.".into());
     let prompt = format!("[MISSION-CONTROL-RESEARCH-RESULT]\nDer Recherche-Task {} („{}“) ist abgeschlossen und geprüft. Review: {}. Berichtdatei: {}. Berichtlink: {}. Lies den vollständigen Bericht und antworte dem Menschen auf Deutsch mit: (1) einem klaren Fazit in wenigen Sätzen, (2) den wichtigsten konkreten Befunden, (3) einem kurzen Vorschlag für die Umsetzung und (4) dem Berichtlink. Sage deutlich, dass bislang nichts umgesetzt wurde. Frage ausdrücklich: ‚Soll ich diese Umsetzung starten? Antworte in Mission Control mit „Go für Umsetzung“.‘ Lege bis zu dieser ausdrücklichen Freigabe keine Umsetzungstasks an, delegiere keine Codeänderung und verändere keine Dateien.", t.s("id"), t.s("title"), review_result, file.display(), report.s("link"));
+    let prompt = format!("{prompt}{}", crate::mission_conclusion::brief(t));
     let co = crate::mission_control::project_coordinator(&crate::store::repos::folder_of(t.s("id")), &socket).unwrap_or_else(|_| crate::coordinator::co::Co::top(&socket));
     let folder = crate::store::repos::folder_of(t.s("id"));
     if crate::coordinator::requests::send(&folder, &prompt, false, t.s("id"), &co).is_ok() {
-        let _ = crate::store::tasks::patch(t.s("id"), |task| task.put("missionImplementationApproval", "pending"));
+        let _ = crate::store::tasks::patch(t.s("id"), |task| { task.put("missionImplementationApproval", "pending"); task.put("missionConclusionRequested", true); });
     }
 }
