@@ -136,6 +136,7 @@ mod detached_jobs;
 mod doctor;
 mod doctor_leftovers;
 mod doctor_settings;
+mod end_to_end;
 mod endings;
 mod fallback;
 mod fallback_more;

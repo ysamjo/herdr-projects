@@ -158,8 +158,11 @@ pub fn step(n: i64) -> Value { json!({ "files": { "f.txt": format!("v{n}\n") }, 
 pub fn delegate_with(id: &str, asked: Value) -> Obj { sw::actions::start::delegate(id, asked.as_object().cloned().unwrap_or_default().into_iter().collect()).unwrap_or_else(|e| panic!("delegate {id}: {}", e.msg)) }
 /// A world whose agents keep their conversations inside it, whose waits are short, and whose agents are processes
 /// of their own that the board can end.
-pub fn cut_world(waits: &str, settings: Value) -> World {
-    let w = world_with(Opts { repo: true, settings, ..Default::default() });
+pub fn cut_world(waits: &str, settings: Value) -> World { cut_world_with(Opts { repo: true, settings, ..Default::default() }, waits) }
+/// The same, for a test that needs more of the world (an origin remote, for a push and a pull request).
+pub fn cut_world_with(mut o: Opts, waits: &str) -> World {
+    o.repo = true;
+    let w = world_with(o);
     for (k, v) in [("HERDR_PROJECTS_RETRY_MS", waits), ("HERDR_PROJECTS_ENDED_MS", "0"), ("HERDR_PROJECTS_QUIET_MS", "60")] { set(k, v); }
     w.patch(|s| s["pids"] = json!(true));
     w
