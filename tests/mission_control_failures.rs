@@ -102,6 +102,46 @@ fn a_coordinator_whose_error_passes_by_itself_is_asked_to_carry_on_before_anothe
 }
 
 #[test]
+fn a_coordinator_silent_crash_is_detected_and_hands_over_with_git_and_terminal_context() {
+    let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
+    sw::mission_control::ensure(&w.socket).unwrap(); drain();
+    let pane = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
+    // Simulate process crashing silently with non-zero exit code on screen
+    w.patch(|st| {
+        for p in st["panes"].as_array_mut().unwrap() {
+            if p.s("pane_id") == pane {
+                p["agent"]["screen"] = json!("Build failed.\nfatal error: out of memory\nprocess exited with code 137");
+                p["agent"]["status"] = json!("done");
+            }
+        }
+    });
+    sw::mission_fallback::tick(&w.socket).unwrap(); drain();
+    let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    assert_eq!(c.at("run").s("kind"), "codex", "silent crash triggers immediate handover to next program");
+    let told = prompts(&w, &pane);
+    assert!(told.iter().any(|m| m.contains("Providerwechsel") && m.contains("Prozess-Abbruch erkannt")), "{told:?}");
+    assert!(told.iter().any(|m| m.contains("Letzte Konsolenausgabe des vorigen Orchestrators")), "{told:?}");
+}
+
+#[test]
+fn a_coordinator_idle_timeout_is_detected_and_hands_over() {
+    unsafe { std::env::set_var("HERDR_CONTROL_IDLE_TIMEOUT_MS", "5000"); }
+    let w = world(); apply_priority("agy,codex").unwrap(); mission(&w);
+    sw::mission_control::ensure(&w.socket).unwrap(); drain();
+    let pane = sw::coordinator::state::get(coordinator(&w)).unwrap().t("pane");
+    submit(&w.root, "Ein Auftrag der hängt", &w.socket).unwrap(); drain();
+    // Advance clock past the idle timeout
+    sw::clock::set(Some(sw::clock::now() + 10_000));
+    sw::mission_fallback::tick(&w.socket).unwrap(); drain();
+    sw::clock::set(None);
+    let c = sw::coordinator::state::get(coordinator(&w)).unwrap();
+    assert_eq!(c.at("run").s("kind"), "codex", "hanging coordinator hands over after idle timeout");
+    let told = prompts(&w, &pane);
+    assert!(told.iter().any(|m| m.contains("Stille-Erkennung (Idle Timeout)")), "{told:?}");
+    unsafe { std::env::remove_var("HERDR_CONTROL_IDLE_TIMEOUT_MS"); }
+}
+
+#[test]
 fn a_coordinator_whose_program_herdr_cannot_start_as_an_agent_runs_in_its_pane() {
     let w = world(); apply_priority("freebuff,codex").unwrap(); mission(&w);
     sw::mission_control::ensure(&w.socket).unwrap(); drain();
