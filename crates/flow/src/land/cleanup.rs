@@ -55,7 +55,7 @@ pub fn cleanup_with(t: &Task, o: Opts) -> Cleanup {
     // one, its saved conversation end in a finished turn, and nothing run under it.
     let at_rest = |a: &Value| -> bool {
         let Some(api) = &api else { return false };
-        let screen = read_screen(api, link.s("pane"), Some(a.s("agent_status")), 120);
+        let screen = read_screen(api, link.s("pane"));
         if screen.trim().is_empty() { return false; }
         let sig = format!("{}|{}", text(a.at("state_change_seq")), sha1_smol::Sha1::from(screen.as_bytes()).digest());
         let at = { let q = quiet.borrow(); if q.s("sig") == sig { q.i("at") } else { now() } };
@@ -136,6 +136,9 @@ pub fn cleanup_with(t: &Task, o: Opts) -> Cleanup {
         if in_use() { return used(); }
         if !flow::git::dirty(Path::new(wt)).is_empty() { return keep(format!("{wt_short} (uncommitted changes)")); }
         if moved() { return keep(format!("{wt_short} (new work arrived during clean-up)")); }
+        if !link.b("ownsWorkspace") && link.b("agentPaneCreated") {
+            if let Some(api) = &api { if api.pane_get(link.s("pane")).is_some() && api.pane_close(link.s("pane")).is_none() { return keep(format!("{wt_short} (its agent pane could not be closed)")); } }
+        }
         let removed = (|| -> crate::err::Res<()> {
             match (&api, link.b("ownsWorkspace")) {
                 (Some(api), true) => {

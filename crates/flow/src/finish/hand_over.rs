@@ -29,9 +29,12 @@ fn done_so_far(t: &Task) -> String {
     let tree = cwd_of(t);
     let base = if t.b("baseSha") { t.t("baseSha") } else if t.b("from") { t.t("from") } else { "HEAD".into() };
     let commits: Vec<String> = git_out(&tree, &["log", "--oneline", "--no-decorate", "-20", &format!("{base}..HEAD")]).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect();
-    let loose = flow::git::dirty(&tree).lines().filter(|l| !l.is_empty()).count();
+    let status = git_out(&tree, &["status", "--porcelain=v1", "--untracked-files=all"]).unwrap_or_default();
+    let loose = status.lines().filter(|l| !l.is_empty()).count();
+    let head = git_out(&tree, &["rev-parse", "HEAD"]).unwrap_or_default();
     [if commits.is_empty() { "It committed nothing on this branch yet.".to_string() } else { format!("Its commits on this branch so far, newest first:\n{}", commits.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) },
-        if loose > 0 { format!("{loose} file{} changes that are not committed yet.", if loose == 1 { " has" } else { "s have" }) } else { String::new() }]
+        format!("Working directory: {}\nStarting revision: {base}\nCurrent revision: {}", tree.display(), head.trim()),
+        if loose > 0 { format!("{loose} file{} changes that are not committed yet. Preserve these files, including untracked and binary files:\n{status}", if loose == 1 { " has" } else { "s have" }) } else { String::new() }]
         .into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n")
 }
 /// The findings that are still open: the last review's, when it failed the gate and the work has not passed one since.
@@ -39,16 +42,31 @@ fn open_findings(t: &Task) -> String {
     let rv = t.at("review");
     if rv.is_object() && !gate::passes(rv) && gate::sendable(rv) { format!("The last review of this work failed ({}), and what it found is still open:\n\n{}", gate::result(rv, "merge"), gate::findings_text(rv, false)) } else { String::new() }
 }
+/// What the check last said here, so the next agent knows what already held and what did not: a check that passed on an
+/// earlier revision is not a pass for this one, and a check that failed is still open.
+fn check_state(t: &Task) -> String {
+    let c = t.at("checkPassed");
+    if c.is_object() && !c.s("head").is_empty() {
+        return format!("The check last passed on revision {} (command: {}). If the work moved on since, that says nothing about the current revision: run it again before you finish.", c.s("head"), c.t("with"));
+    }
+    let f = t.at("failure");
+    if f.s("stage") == "check" && !f.s("detail").is_empty() { return format!("The check failed here, and that is still open:\n\n{}", crate::store::failures::bound_detail(f.s("detail"))); }
+    String::new()
+}
 /// All the next agent is given: the task as a first agent gets it, then that it takes over, from whom and why, what was
 /// done, the last words of the one before it, and what is open.
 pub fn handover_prompt(t: &Task, from: &str, why: &str, findings: &str) -> String {
     let place = if t.b("worktree") { format!("in the same folder, on the same branch ({})", t.s("branch")) } else { "in the same folder".into() };
+    // The caller that knows better says what is open; otherwise the last review and the last check speak for themselves.
+    let open = if findings.is_empty() {
+        [open_findings(t), check_state(t)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
+    } else { findings.to_string() };
     [first_prompt(t),
         format!("You are taking this task over from another agent ({from}), which could not go on: {why}. You work {place}: everything it did is there. Look at it first{} and carry on from where it stands. Do not start over, and do not undo its work without a reason.", if t.b("worktree") { " (git log, git status, git diff)" } else { "" }),
         done_so_far(t),
         if t.b("said") { format!("Its last message was:\n{}", t.s("said")) } else { String::new() },
-        if findings.is_empty() { open_findings(t) } else { findings.to_string() },
-        "Finish the task as its rules say.".into(),
+        open,
+        "Inspect the existing files and changes before editing. The previous agent may have stopped without a final summary. Check whether external actions (such as a push or pull request) already happened before repeating them. Finish the task as its rules say.".into(),
     ].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
 }
 /// What a hand-over changes on the task, put back whole when the next agent cannot be started.
@@ -64,6 +82,7 @@ pub fn hand_over_to(id: &str, g: &mut Guard, why: &str, findings: &str, first: O
     let w = work(Some(&t));
     let mut list = list_of(w.at("worker.fallback"));
     if let Some(f) = first { list.insert(0, f.to_string()); }
+    list.retain(|a| crate::mission_control::worker_allowed_for(&t, t.at("link").s("socket"), a));
     if list.is_empty() || !t.at("link").b("pane") { return Ok(false); }
     let api = flow::task::h(&t);
     let from = on_now(&t, &w.t("worker.agent"));
@@ -80,7 +99,11 @@ pub fn hand_over_to(id: &str, g: &mut Guard, why: &str, findings: &str, first: O
         // The program that cannot go on is ended, so the pane is at its shell for the next one.
         let pane = t.at("link").t("pane");
         if api.pane_get(&pane).is_none() { note(g, "worker.fallback: nobody took over, the agent's terminal is gone".into())?; return Ok(false); }
-        if api.agent_get(&pane).ok().flatten().is_some() && !api.pane_quit(&pane, 6000) { note(g, format!("worker.fallback: nobody took over, {} could not be ended", agent_of(&from).kind))?; return Ok(false); }
+        match api.agent_get(&pane) {
+            Err(e) => { note(g, format!("worker.fallback: nobody took over, the previous agent's status is unknown ({})", one_line(&e.message, 160)))?; return Ok(false); }
+            Ok(Some(_)) if !api.pane_quit(&pane, 6000) => { note(g, format!("worker.fallback: nobody took over, {} could not be ended", agent_of(&from).kind))?; return Ok(false); }
+            _ => {}
+        }
         let before: Obj = KEPT.iter().map(|k| (k.to_string(), t.at(k).clone())).collect();
         let k = agent_of(&next).kind;
         let mut entry = Value::Null;

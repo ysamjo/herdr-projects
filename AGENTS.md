@@ -7,6 +7,9 @@ holds what, so that two tasks do not edit the same file.
   through the build cache every worktree shares). It is then `./target/quick/herdr-projects`.
 - `./target/quick/herdr-projects docs --where` prints all of the map; `… docs --where crates/board/src/board/view` only
   that folder.
+- Mission Control uses `mission_ui/` (screen), `mission_control.rs` (priority and submission), `mission_layout.rs` (owned panes), `mission_view.rs` (bottom input and mobile focus), `mission_conclusion.rs` (saved conclusions and task-bound approval), `mission_requests.rs` / `mission_status.rs` (request grouping and German labels), and `finish/coordinator_review.rs` (return to the same orchestrator). Open task rows belong in Herdr’s native agent list, never duplicated inside Mission Control. Sidebar-only `herdr-task` reports must not count as coding CLIs. Retired coordinator panes close only after their output was saved, a replacement is live, and they are at rest; verify terminal identity. Every submitted message must include its selected project explicitly. The coordinator only delegates and reviews; workers and their fallbacks must use a different CLI kind from the running coordinator. Open actions must run this branch’s source build, never a stock release.
+- Agent terminals belong in tiled Herdr panes. Lifecycle cleanup must close only the owned pane; closing a tab can
+  close Mission Control and every sibling agent terminal.
 - It is also a page in your own folder, `docs/where-things-live.md`, written by the workspace setup and by
   `npm run check`. It is not in git: never commit it. The tests are one file per area (`ls tests`), all of them
   modules of one test program, `tests/main.rs`.
@@ -49,6 +52,10 @@ nothing to `npm install`; `package.json` is only there so that every agent finds
   pick lines.
 - **A task's words go in the `docs/` page of its own topic, and only there.** A new topic is a new page. A page that
   grows a second topic is split.
+- Automatic screen checks use only `pane read --source visible`. Never collect application-owned CLI history or send navigation keys, including when the CLI is idle: this moves the user’s scroll position.
+- **Interactive CLI provider errors** without a transcript reader are classified only from explicit error markers in
+  the last terminal lines after Herdr reports the agent idle or done. Keep the classifier narrow and route matches
+  through the existing retry/fallback path; never inspect or steer a running CLI through ACP or a headless command.
 - **Do not touch `README.md` for feature work.** It is only what this is and how to install and start it. It has no
   list of pages: a new page is found in `docs/`.
 - **A report, a review or a research result is never committed to the repo**, in no folder. It is kept in the task's

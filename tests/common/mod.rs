@@ -36,7 +36,7 @@ pub fn world_with(o: Opts) -> World {
     std::fs::create_dir_all(base.join("home")).unwrap();
     let base = std::fs::canonicalize(&base).unwrap();
     let b = |p: &str| base.join(p).display().to_string();
-    for k in ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_PLUGIN_ID", "HERDR_PLUGIN_CONTEXT_JSON", "HERDR_ENV", "HERDR_SESSION", "TMUX", "NO_COLOR", "HERDR_PROJECTS_DATA_DIR", "HERDR_PROJECTS_CONFIG_DIR", "HERDR_PROJECTS_REPORTS_DIR", "HERDR_PROJECTS_WEBUI", "HERDR_PROJECTS_PROGRESS", "HERDR_PROJECTS_SANDBOX", "HERDR_PROJECTS_RETRY_MS", "HERDR_PROJECTS_ENDED_MS", "HERDR_PROJECTS_QUIET_MS", "HERDR_PROJECTS_READY_MS", "HERDR_PROJECTS_SUBMIT_MS", "HERDR_PROJECTS_TICK_MS", "ELEVENLABS_API_KEY"] { unsafe { std::env::remove_var(k) } }
+    for k in ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_PLUGIN_ID", "HERDR_PLUGIN_CONTEXT_JSON", "HERDR_ENV", "HERDR_SESSION", "TMUX", "NO_COLOR", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "HERDR_PROJECTS_DATA_DIR", "HERDR_PROJECTS_CONFIG_DIR", "HERDR_PROJECTS_REPORTS_DIR", "HERDR_PROJECTS_WEBUI", "HERDR_PROJECTS_PROGRESS", "HERDR_PROJECTS_SANDBOX", "HERDR_PROJECTS_RETRY_MS", "HERDR_PROJECTS_ENDED_MS", "HERDR_PROJECTS_QUIET_MS", "HERDR_PROJECTS_READY_MS", "HERDR_PROJECTS_SUBMIT_MS", "HERDR_PROJECTS_TICK_MS", "ELEVENLABS_API_KEY"] { unsafe { std::env::remove_var(k) } }
     let socket = b("herdr.sock");
     // herdr's socket is there (the fake answers for herdr itself): what looks for a running herdr finds one.
     let listen = std::os::unix::net::UnixListener::bind(&socket).unwrap();
@@ -158,8 +158,11 @@ pub fn step(n: i64) -> Value { json!({ "files": { "f.txt": format!("v{n}\n") }, 
 pub fn delegate_with(id: &str, asked: Value) -> Obj { sw::actions::start::delegate(id, asked.as_object().cloned().unwrap_or_default().into_iter().collect()).unwrap_or_else(|e| panic!("delegate {id}: {}", e.msg)) }
 /// A world whose agents keep their conversations inside it, whose waits are short, and whose agents are processes
 /// of their own that the board can end.
-pub fn cut_world(waits: &str, settings: Value) -> World {
-    let w = world_with(Opts { repo: true, settings, ..Default::default() });
+pub fn cut_world(waits: &str, settings: Value) -> World { cut_world_with(Opts { repo: true, settings, ..Default::default() }, waits) }
+/// The same, for a test that needs more of the world (an origin remote, for a push and a pull request).
+pub fn cut_world_with(mut o: Opts, waits: &str) -> World {
+    o.repo = true;
+    let w = world_with(o);
     for (k, v) in [("HERDR_PROJECTS_RETRY_MS", waits), ("HERDR_PROJECTS_ENDED_MS", "0"), ("HERDR_PROJECTS_QUIET_MS", "60")] { set(k, v); }
     w.patch(|s| s["pids"] = json!(true));
     w

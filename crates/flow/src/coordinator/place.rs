@@ -1,4 +1,5 @@
-//! Where a coordinator lives in herdr: a tab of its own, named after it. The top-level Coordinator's (`Coordinator`)
+//! Where a coordinator lives: a visible tiled pane beside Mission Control, or a named tab in the classic board.
+//! In the classic board, the top-level Coordinator's (`Coordinator`)
 //! and the machine coordinator's are in the home space (`~`); a project coordinator's is in its repo's own space. A
 //! top-level one still in the space of its own it had before is moved over. Checked on herdr 0.9.3: a space is labelled after the folder of
 //! its first tab's pane, so the space the tab was last put in is remembered; `pane move --new-tab` carries a running
@@ -26,10 +27,15 @@ pub fn home_space(api: &Herdr, c: Option<&Obj>) -> Res<String> {
 fn space_for(api: &Herdr, co: &Co, c: Option<&Obj>) -> Res<String> {
     let Some(root) = co.root().filter(|r| real(r) != real(&user_home())) else { return home_space(api, c) };
     let list: Vec<Value> = api.workspaces()?.into_iter().filter(|w| !w.at("worktree").is_object()).collect();
-    let base = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let repo = co.repo().unwrap_or_default();
-    if let Some(w) = list.iter().find(|w| c.map(|c| c.b("space") && w.s("workspace_id") == c.s("space")).unwrap_or(false)).or_else(|| list.iter().find(|w| w.s("label") == repo || w.s("label") == base)) { return Ok(w.t("workspace_id")); }
-    Ok(api.workspace_create(&root.display().to_string(), repo, &[])?.at("workspace").t("workspace_id"))
+    let mission = crate::mission_control::is_active(&co.socket);
+    let label = repo.to_string();
+    if mission {
+        if let Some(workspace) = crate::mission_layout::project_workspace(&co.socket, &root.display().to_string()) { return Ok(workspace); }
+    }
+    if let Some(w) = list.iter().find(|w| c.map(|c| c.b("space") && w.s("workspace_id") == c.s("space")).unwrap_or(false))
+        .or_else(|| list.iter().find(|w| w.s("label") == label || (!mission && w.s("label") == root.file_name().unwrap_or_default().to_string_lossy()))) { return Ok(w.t("workspace_id")); }
+    Ok(api.workspace_create(&root.display().to_string(), &label, &[])?.at("workspace").t("workspace_id"))
 }
 /// Not written down (the state file was lost) but there: the pane in the coordinator's own folder. A project
 /// coordinator's folder is the human's repo: only a pane in a tab named after it.
@@ -46,19 +52,45 @@ fn put(c: &mut Obj, co: &Co, space: Value, pane: &Value, was: Value) {
 }
 /// Its tab, found or opened: one pane, in its own folder. Returns the pane.
 pub fn open_tab(api: &Herdr, co: &Co, env: &[(String, String)]) -> Res<Value> {
-    let mut pane = adopt(api, co);
+    let mission_project = co.repo().is_some() && crate::mission_control::is_active(&co.socket);
+    if co.is_top() {
+        if let Some(pane) = crate::mission_layout::split(api, &home(co).display().to_string(), env)? {
+            change(co, |c| { put(c, co, pane.at("workspace_id").clone(), &pane, Value::Null); c.put("tiled", true); true })?;
+            return Ok(pane);
+        }
+    }
+    let saved = get(co);
+    let mut pane = if mission_project && saved.as_ref().map(|c| !c.b("pane")).unwrap_or(false) { None } else { adopt(api, co) };
+    if mission_project {
+        let folder = home(co).display().to_string();
+        if let Some(control_id) = crate::mission_layout::project_anchor(&co.socket, &folder) {
+            if let (Some(existing), Some(control)) = (pane.as_ref(), api.pane_get(&control_id)) {
+                if existing.s("tab_id") != control.s("tab_id") {
+                    let moved = api.call(crate::herdr::cli::args(&["pane", "move", existing.s("pane_id"), "--tab", control.s("tab_id"), "--split", "right", "--target-pane", &control_id, "--no-focus"]))?;
+                    pane = Some(moved.at("move_result").at("pane").clone());
+                }
+            }
+        }
+    }
     let mut old = None;
     if let Some(p) = pane.as_ref().filter(|_| co.is_top()) { if let Some(w) = api.workspace_get(p.s("workspace_id")) { if w.s("label") == COORDINATOR_TAB && !w.at("worktree").is_object() && w.i("pane_count") == 1 { old = Some(w.t("workspace_id")); } } }
-    let space = match &pane { Some(p) => p.t("workspace_id"), None => space_for(api, co, get(co).as_ref())? };
+    let space = match &pane { Some(p) => p.t("workspace_id"), None => space_for(api, co, saved.as_ref())? };
     if pane.is_none() {
-        let r = api.tab_create(&space, &home(co).display().to_string(), &co.name(), env)?;
-        pane = if r.at("root_pane").is_object() { Some(r.at("root_pane").clone()) } else { api.panes(Some(&space))?.into_iter().find(|p| p.s("tab_id") == r.at("tab").s("tab_id")) };
-        if pane.is_none() { if r.at("tab").b("tab_id") { api.tab_close(r.at("tab").s("tab_id")); } crate::fail!("herdr opened no terminal for the {}", co.name()); }
+        if mission_project {
+            let folder = home(co).display().to_string();
+            let Some(control) = crate::mission_layout::project_anchor(&co.socket, &folder) else { crate::fail!("Der Projekt-Space {} hat kein Taskfeld-Pane.", co.name()); };
+            pane = Some(crate::mission_view::split_coordinator(api, &control, &home(co).display().to_string(), env)?);
+        } else {
+            let r = api.tab_create(&space, &home(co).display().to_string(), &co.name(), env)?;
+            pane = if r.at("root_pane").is_object() { Some(r.at("root_pane").clone()) } else { api.panes(Some(&space))?.into_iter().find(|p| p.s("tab_id") == r.at("tab").s("tab_id")) };
+            if pane.is_none() { if r.at("tab").b("tab_id") { api.tab_close(r.at("tab").s("tab_id")); } crate::fail!("herdr opened no terminal for the {}", co.name()); }
+        }
     }
     let pane = pane.unwrap();
     change(co, |c| {
         let sp = if old.is_some() { c.at("space").clone() } else { json!(space) };
         put(c, co, sp, &pane, Value::Null);
+        if mission_project { c.put("tiled", true); }
         if let Some(o) = &old { c.put("workspace", o.clone()); } // moved over by whoever looks next (move_over)
         if !c.b("run") && pane.b("agent") { c.put("run", json!({ "kind": pane.at("agent") })); } // found running
         true
@@ -84,7 +116,23 @@ pub fn move_over(api: &Herdr, co: &Co, quiet: bool) -> Res<Option<Value>> {
 }
 /// Close it: its tab, never the home space around it.
 pub fn close_place(api: &Herdr, c: &Obj) {
+    if c.b("tiled") { if c.b("pane") { api.pane_close(c.s("pane")); } return; }
     if c.b("workspace") { if c.b("pane") { api.pane_close(c.s("pane")); } return; }
     if c.b("tab") && c.b("pane") && api.pane_get(c.s("pane")).map(|p| p.s("tab_id") == c.s("tab")).unwrap_or(false) { api.tab_close(c.s("tab")); }
     else if c.b("pane") { api.pane_close(c.s("pane")); }
+}
+
+/// A surviving coordinator follows a reopened Mission Control without losing its conversation.
+pub fn follow_mission(api: &Herdr, co: &Co, pane: Value) -> Res<Value> {
+    if !co.is_top() { return Ok(pane); }
+    let Some(root) = crate::mission_layout::anchor(&co.socket).and_then(|id| api.pane_get(&id)) else { return Ok(pane) };
+    if pane.s("tab_id") == root.s("tab_id") { return Ok(pane); }
+    let moved = api.call(crate::herdr::cli::args(&["pane", "move", pane.s("pane_id"), "--tab", root.s("tab_id"), "--split", "right", "--target-pane", root.s("pane_id"), "--no-focus"]))?;
+    let next = moved.at("move_result").at("pane").clone();
+    if !next.b("pane_id") { crate::fail!("Der Orchestrator konnte nicht neben Mission Control verschoben werden.") }
+    change(co, |c| { put(c, co, next.at("workspace_id").clone(), &next, pane.at("pane_id").clone()); c.put("tiled", true); true })?;
+    let mut layout = crate::mission_layout::state(&co.socket);
+    let mut children = layout.arr("children").to_vec(); children.push(next.at("pane_id").clone()); layout.put("children", children);
+    crate::store::files::write_json(&crate::mission_layout::file(&co.socket), &Value::Object(layout))?;
+    Ok(next)
 }

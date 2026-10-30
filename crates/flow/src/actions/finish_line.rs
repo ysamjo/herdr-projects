@@ -22,10 +22,16 @@ use crate::store::handovers::{handover_line, handovers};
 use crate::store::reviews::{current_review, review_history};
 use crate::store::tasks::{assert_unarchived, find, get, update, Change, Task};
 
+/// Approve as the board's own action does; a test calls this too. `approve_from` records where the yes came from.
+pub fn approve(id: &str, seen: Option<(Value, Value)>, anyway: bool) -> Res<Said> {
+    approve_from(id, seen, anyway, "board")
+}
 /// Approve: the one decision that ships finished work. An agent's own request for permission gets a yes instead.
 /// `seen`: what the human was shown when they said yes (pr, head): if the pull request or the reviewed commit is
 /// another one by now, nothing is merged. `anyway`: work whose last review failed, or whose GitHub checks failed, is merged only when asked for so.
-pub fn approve(id: &str, seen: Option<(Value, Value)>, anyway: bool) -> Res<Said> {
+/// `from`: where the yes came from, kept with the merge (`approvedVia`): `board`, `remote`, `terminal`, or `session`
+/// for a command run without a terminal.
+pub fn approve_from(id: &str, seen: Option<(Value, Value)>, anyway: bool, from: &str) -> Res<Said> {
     let cur = find(id)?;
     assert_unarchived(&cur)?;
     let moved = |t: &Task| -> Res<()> {
@@ -51,7 +57,7 @@ pub fn approve(id: &str, seen: Option<(Value, Value)>, anyway: bool) -> Res<Said
         if t.b("syncBlocked") { crate::fail!("{} is behind main and cannot be approved yet: {}. The board keeps trying to bring it up to date.", t.s("id"), t.at("syncBlocked").s("why")); }
         if runner_alive(t) { crate::fail!("{} is busy. Try again in a moment.", t.s("id")); }
         t.put("stage", "merging"); t.put("msg", "Merging"); t.put("requireApproval", false); t.put("since", now()); t.put("mergeFailed", false);
-        let mut mi = json!({ "approvedAt": now(), "repairs": t.at("mergeIntent").i("repairs"), "verifiedHead": t.at("reviewedHead") });
+        let mut mi = json!({ "approvedAt": now(), "approvedVia": from, "repairs": t.at("mergeIntent").i("repairs"), "verifiedHead": t.at("reviewedHead") });
         // Merged in spite of GitHub's failed checks: they are not looked at again for this merge.
         if checks.is_some() { mi["anyway"] = json!(true); t.put("prFailure", Value::Null); }
         t.put("mergeIntent", mi); t.put("checksWait", Value::Null);

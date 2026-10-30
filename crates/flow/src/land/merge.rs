@@ -110,6 +110,11 @@ pub fn land_core(id: &str, g: &mut Guard) -> Res<()> {
     let tree = sync::tree_of(&t);
     let how = setting_text("merge.method", Some(&t)); // read right before the merge. squash by default
     if let Some(b) = sync::named_base(&root, &t) { if !onto_named(id, g, &t, &root, &tree, &b)? { return Ok(()); } }
+    // An approval that names no commit cannot merge: nothing would tie what lands to what was checked.
+    if !tree.is_empty() && t.b("mergeIntent") && t.at("mergeIntent").t("verifiedHead").is_empty() {
+        fail(g, "Merge has no checked commit bound to it", "The approval on this task names no commit, so there is no telling what the merge would take.\n\nNothing was merged.", "Approve again: the commit the task was checked at becomes the one that merges.", no_fix())?;
+        return Ok(());
+    }
     if !tree.is_empty() {
         let tp = Path::new(&tree);
         let pre = (|| -> Res<Option<&'static str>> {

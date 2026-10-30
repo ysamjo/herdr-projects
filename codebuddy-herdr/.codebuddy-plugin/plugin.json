@@ -1,0 +1,6 @@
+{
+  "name": "codebuddy-herdr",
+  "version": "0.1.0",
+  "description": "Makes CodeBuddy Code a first-class Herdr agent: reports working, idle, and blocked state to Herdr and adds a skill for inspecting and controlling Herdr panes and sibling agents.",
+  "license": "MIT"
+}

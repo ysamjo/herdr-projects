@@ -8,7 +8,7 @@
 
 <p align="center"><a href="https://github.com/eliasstravik/herdr-projects/blob/main/docs/get-started.md"><img src="assets/buttons/install-herdr-projects.svg" alt="Install herdr-projects" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;no&nbsp;hosted&nbsp;service &nbsp; ✓&nbsp;macOS&nbsp;and&nbsp;Linux,&nbsp;Herdr&nbsp;0.9.3+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;no&nbsp;hosted&nbsp;service &nbsp; ✓&nbsp;macOS&nbsp;and&nbsp;Linux,&nbsp;Herdr&nbsp;0.9.5+</sub></p>
 
 <br />
 
@@ -80,7 +80,7 @@ An open board and the keeper see the new program and load it by themselves, once
 
 ### Do I need to know how to code?
 
-You need to be comfortable in a terminal. The plugin downloads one prebuilt program for your platform, and you never have to edit its files: everything changes by asking the Coordinator or from the board's settings page (`Ctrl+E`). You'll need macOS or Linux, Herdr 0.9.3 or newer, Git, `curl` or `wget`, and an agent CLI the board can start: Claude Code, Codex, pi or another agent herdr supports. `gh` (pull requests) and `tailscale` (private review links) are optional. Rust/Cargo is needed only when you build it yourself. [Installing](docs/install.md) covers the prerequisites.
+You need to be comfortable in a terminal. The plugin downloads one prebuilt program for your platform, and you never have to edit its files: everything changes by asking the Coordinator or from the board's settings page (`Ctrl+E`). You'll need macOS or Linux, Herdr 0.9.5 or newer, Git, `curl` or `wget`, and an agent CLI the board can start: Claude Code, Codex, pi or another agent herdr supports. `gh` (pull requests) and `tailscale` (private review links) are optional. Rust/Cargo is needed only when you build it yourself. [Installing](docs/install.md) covers the prerequisites.
 
 ### How do I check that Herdr Projects is running?
 
@@ -120,6 +120,10 @@ No. Select a task on the board and press `Tab` to put an agent on it, or run `he
 
 They are soft. By default nothing merges without your yes, work whose review failed is never merged by a plain yes, and a repo's own file can't switch on merging by itself, drop the review or change the rules its own branch is checked by. But agents run with full access and have a shell: one can do anything you can, a review is a second agent's judgement and not a proof, and an automation runs with nobody watching. Turn on `worker.access ask` for prompts, a [plan first](docs/plan.md) for a yes before any change, and [limits](docs/limits.md) for a cap on time and tokens.
 
+### Where do I report a security problem?
+
+Privately, through [SECURITY.md](SECURITY.md). Please do not open a public issue.
+
 ### What does it cost?
 
 Herdr Projects is free and [MIT licensed](LICENSE). Your agent CLI's usual usage charges still apply: every task is a full agent session plus a review, the Coordinator spends tokens on each message, and the Watcher makes a small model call about once a minute per working agent.
@@ -130,4 +134,4 @@ Herdr Projects is free and [MIT licensed](LICENSE). Your agent CLI's usual usage
 
 <p align="center"><a href="https://github.com/eliasstravik/herdr-projects/blob/main/docs/get-started.md"><img src="assets/buttons/install-herdr-projects.svg" alt="Install herdr-projects" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;no&nbsp;hosted&nbsp;service &nbsp; ✓&nbsp;macOS&nbsp;and&nbsp;Linux,&nbsp;Herdr&nbsp;0.9.3+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;no&nbsp;hosted&nbsp;service &nbsp; ✓&nbsp;macOS&nbsp;and&nbsp;Linux,&nbsp;Herdr&nbsp;0.9.5+</sub></p>

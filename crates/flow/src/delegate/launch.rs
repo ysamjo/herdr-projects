@@ -45,6 +45,7 @@ pub fn launch_extras(t: &Task, role: &str, kind: &str, round: i64, standing: &st
 pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) -> Res<&'static str> {
     let t = get(id).ok_or("the task is gone")?;
     let api = flow::task::h(&t);
+    if t.at("link").b("missionPane") { crate::mission_agents::release(&api, t.at("link").s("pane")); }
     let kind = t.t("agent");
     // The worker's settings, read now, as it starts. A planner of its own runs on its own program and model.
     let w = work(Some(&t));
@@ -55,9 +56,22 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
     let level = start::effort_for(&kind, &model, &who.effort);
     let root = if t.b("root") { PathBuf::from(t.s("root")) } else { folder_of(t.s("id")) };
     installed::pre_trust(&kind, &root, &who.access);
+    if kind == "agy" { installed::pre_trust(&kind, &cwd_of(&t), &who.access); }
+    // Keep the task's anchor terminal available for Mission Control and put every first agent in a real tiled pane.
+    // Subsequent resumes reuse their existing pane; retrying a failed start must not leave orphan splits behind.
+    let t = if !t.at("link").b("agentPaneCreated") && !t.b("attemptOf") {
+        let anchor = t.at("link").t("pane");
+        let split = api.pane_split(&anchor, &cwd_of(&t).display().to_string(), "right", &crate::store::files::board_env())?;
+        g.set(|t| {
+            let l = t.obj_mut("link");
+            l.put("tab", split.at("tab_id").clone()); l.put("pane", split.at("pane_id").clone()); l.put("terminal", split.at("terminal_id").clone());
+            l.put("agentPaneCreated", true);
+        })?
+    } else { t };
     let taken: Vec<String> = api.agents().unwrap_or_default().iter().filter(|a| a.s("pane_id") != t.at("link").s("pane")).map(|a| a.t("name")).filter(|n| !n.is_empty()).collect();
     let name = agent_name(&t, &taken);
-    if plan::planner(&t) { flow::tabs::name_tab(&api, t.at("link").s("tab"), flow::tabs::PLANNER_TAB); } else { flow::tabs::name_agent_tab(&api, t.at("link").s("tab"), Some(&t)); }
+    // Pane labels identify the shared task workspace; planner identity is already shown in task state.
+    flow::tabs::name_agent_tab(&api, t.at("link").s("tab"), Some(&t));
     let x = launch_extras(&t, "agent", &kind, 0, &rules(&t), resume)?;
     let fast = if plan::planner(&t) { None } else { Some(who.fast) };
     let args = |hooked: bool| -> Res<Vec<String>> {
@@ -108,7 +122,10 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
 /// a conversation that is reopened keeps its program, which is the one that holds it.
 pub fn agent_now(g: &mut Guard, t: Task) -> Res<Task> {
     if (t.b("startedAgentAt") && resumable(&t)) || plan::planner(&t) { return Ok(t); }
-    let k = agent_of(&if t.b("on") { t.t("on") } else { setting_text("worker.agent", Some(&t)) }).kind;
+    let choice = if t.at("link").b("missionPane") { crate::mission_control::worker_choice(&t, t.at("link").s("socket"))? }
+        else if t.b("on") { t.t("on") } else { setting_text("worker.agent", Some(&t)) };
+    let k = agent_of(&choice).kind;
+    let t = if t.at("link").b("missionPane") { g.set(|t| { t.put("on", choice.clone()); })? } else { t };
     if !k.is_empty() && k != t.s("agent") { return g.set(|t| { t.put("agent", k.clone()); t.put("app", k.clone()); t.put("session", Value::Null); t.put("transcript", Value::Null); }); }
     Ok(t)
 }

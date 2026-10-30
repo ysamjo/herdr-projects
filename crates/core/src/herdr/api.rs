@@ -7,6 +7,9 @@ use crate::json::*;
 pub struct Herdr { pub socket: Option<String> }
 fn envs(env: &[(String, String)]) -> Vec<String> { env.iter().flat_map(|(k, v)| ["--env".to_string(), format!("{k}={v}")]).collect() }
 
+/// Sidebar-only task rows never count as a running coding CLI.
+pub const TASK_AGENT: &str = "herdr-task";
+
 impl Herdr {
     pub fn new(socket: Option<String>) -> Self { Herdr { socket } }
     pub fn socket_path(&self) -> String { self.socket.clone().unwrap_or_else(super::cli::current_socket) }
@@ -139,11 +142,11 @@ impl Herdr {
         self.call(a).ok()
     }
     // ---- agents
-    pub fn agents(&self) -> HRes<Vec<Value>> { Ok(self.call(args(&["agent", "list"]))?.arr("agents").to_vec()) }
+    pub fn agents(&self) -> HRes<Vec<Value>> { Ok(self.call(args(&["agent", "list"]))?.arr("agents").iter().filter(|a| a.s("agent") != TASK_AGENT).cloned().collect()) }
     /// The agent in a pane (or by name), or None when no agent is there.
     pub fn agent_get(&self, target: &str) -> HRes<Option<Value>> {
         match self.call(args(&["agent", "get", target])) {
-            Ok(r) => Ok(Some(r.at("agent").clone()).filter(|v| !v.is_null())),
+            Ok(r) => Ok(Some(r.at("agent").clone()).filter(|v| !v.is_null() && v.s("agent") != TASK_AGENT)),
             Err(e) if ["agent_not_found", "not_found", "agent_not_running", "pane_not_found"].contains(&e.code.as_str()) => Ok(None),
             Err(e) => Err(e),
         }
@@ -236,18 +239,7 @@ pub fn shown_of(layout: &Value, pane: &str) -> Option<(u16, u16, bool)> {
     let r = if layout.b("zoomed") && layout.s("focused_pane_id") == pane && layout.at("area").is_object() { layout.at("area") } else { mine.at("rect") };
     (r.i("width") > 0 && r.i("height") > 0).then(|| (r.i("width") as u16, r.i("height") as u16, panes.len() > 1))
 }
-/// Reading a terminal. A deep read is only possible (and only harmless) when the agent is idle or done.
-pub fn read_screen(h: &Herdr, pane: &str, status: Option<&str>, lines: i64) -> String {
-    let r = match status {
-        Some("idle") | Some("done") => h.agent_read(pane, "recent-unwrapped", Some(lines)),
-        None => h.pane_read(pane, "visible", None),
-        _ => h.agent_read(pane, "visible", None),
-    };
-    match r {
-        Ok(s) => s,
-        Err(e) => {
-            if e.code == "agent_not_idle" { if let Ok(s) = h.agent_read(pane, "visible", None) { return s; } }
-            h.pane_read(pane, "visible", None).unwrap_or_default()
-        }
-    }
+/// Automatic screen checks must never scroll a CLI's conversation or send it navigation keys.
+pub fn read_screen(h: &Herdr, pane: &str) -> String {
+    h.pane_read(pane, "visible", None).unwrap_or_default()
 }

@@ -136,6 +136,19 @@ seven facts only ([settings](settings.md)). So code an agent writes can never ma
 by itself in one repo, say so yourself: `set merge.by itself --repo <name>`. `show <id>` says what a task really runs
 on, and where each value comes from.
 
+## What the review is not
+
+The review is a quality gate, not a security boundary. The worker, the reviewer and the board run as your Unix user
+with your rights: an agent can change anything you can, and a compromised agent can write what the reviewer writes or
+leave a process behind that does. Repo-owned commands (`workspace.setup`, `check.command`, `check.again`) run through
+`sh` with the board's environment, which carries the GitHub and SSH credentials imported from your login shell. The
+approval is the real boundary, and by default it is yours: `merge.by` is `you`. The command line refuses an `approve`
+that runs inside a task's own agent or reviewer pane (its `HERDR_PANE_ID` matches that task's link); Mission Control,
+the board and a remote board approve without that check, and any process of your user can set the same variable. Every
+merge keeps where its yes came from (`mergeIntent.approvedVia`: `board`, `remote`, `terminal`, or `session` for a
+command run without a terminal, as the Coordinator runs it). That raises the bar; it is not isolation. Keep untrusted
+work off `merge.by: itself`, and read what lands.
+
 ## When the agent stops with an error or a question
 
 - **An error, a usage limit, a cut-off or a refusal** is saved as "Agent stopped" with the real text. A provider error

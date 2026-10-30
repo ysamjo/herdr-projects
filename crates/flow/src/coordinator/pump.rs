@@ -86,7 +86,7 @@ fn ensure(api: &Herdr, co: &Co) -> Res<(Obj, bool)> {
     if c.b("workspace") { match move_over(api, co, false) { Ok(p) => pane = p, Err(_) => { close_place(api, &c); let _ = change(co, |c| { nowhere(c); true }); pane = None; } } }
     // A board kept somewhere else than the default is the board its commands must reach.
     let env: Vec<(String, String)> = ["HERDR_PROJECTS_DATA_DIR", "HERDR_PROJECTS_CONFIG_DIR"].iter().filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| (k.to_string(), v))).collect();
-    let pane = match pane { Some(p) => p, None => open_tab(api, co, &env)? };
+    let pane = match pane { Some(p) => super::place::follow_mission(api, co, p)?, None => open_tab(api, co, &env)? };
     c = get(co).unwrap_or_default();
     if api.agent_get(pane.s("pane_id"))?.is_some() { return Ok((c, false)); }
     // Its program is not running: start it. The same conversation when there was one and the program can reopen it.
@@ -108,14 +108,18 @@ fn ensure(api: &Herdr, co: &Co) -> Res<(Obj, bool)> {
     change(co, |c| { c.put("starting", began); true })?;
     let args = start::start_args(&k, &start::StartOpts { model: run.t("model"), effort: run.t("effort"), access: if run.b("access") { run.t("access") } else { "full".into() }, fast: run.b("fast").then_some(true), resume: resume.clone().unwrap_or_default(), session: session.clone().unwrap_or_default(), extra: launch, ..Default::default() })?;
     let mut blocked = false;
-    match api.agent_start(&name, &k, pane.s("pane_id"), &args, 60000) {
+    // The same start a task gets: a program herdr cannot start as an agent of its own (freebuff, codebuddy) is run in
+    // the pane and reports its state through its plugin. A coordinator writes no plan, so nothing is mounted read-only.
+    let no_task = Obj::new();
+    match crate::plan::sandbox::start_program(api, &no_task, &name, &k, pane.s("pane_id"), &args) {
         Ok(_) => { settle(api, pane.s("pane_id"), &std::iter::once(crate::agents::kinds::program(&k).to_string()).chain(args).collect::<Vec<_>>().join(" ")); }
         Err(e) if e.code == "agent_not_ready" => blocked = true, // a dialog is in the way: what you said waits
         Err(e) => {
             // Why, in plain words, read from its terminal before its tab is closed; the whole account goes in its log.
             let why = start_failed::say(api, &start_failed::Start { kind: &k, setting: "coordinator.agent", again: "send your message again" }, pane.s("pane_id"), &e.message, &dir_of(co).join("start.log"));
-            if let Some(c) = get(co) { close_place(api, &c); }
-            let _ = change(co, |c| { nowhere(c); c.put("starting", 0); true });
+            let keep = co.is_top() && crate::mission_layout::anchor(&co.socket).is_some();
+            if !keep { if let Some(c) = get(co) { close_place(api, &c); } }
+            let _ = change(co, |c| { if keep { c.put("run", run.clone()); } else { nowhere(c); } c.put("starting", 0); true });
             crate::fail!("{why}");
         }
     }
@@ -148,12 +152,19 @@ fn run_pump(co: &Co, taken: &mut HashSet<String>) -> Res<()> {
         if let Some(w) = c.o("want").cloned() {
             taken.insert(w.t("at"));
             // Its conversation is known before its terminal goes: a restart reopens it.
-            if w.s("what") != "open" { if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); } close_place(&api, &c); }
+            let mission_project = co.repo().is_some() && crate::mission_control::is_active(&co.socket);
+            if mission_project && ["new", "handover", "restart", "stop"].contains(&w.s("what")) {
+                if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); }
+                // The tab also contains the task composer and workers; replace only this coordinator.
+                if c.b("pane") { api.pane_close(c.s("pane")); }
+            } else if !["open", "handover"].contains(&w.s("what")) {
+                if c.b("run") { active(co, &c); c = get(co).unwrap_or(c); } close_place(&api, &c);
+            }
             let _ = change(co, |c| {
                 if c.at("want").at("at") == w.at("at") { c.put("want", Value::Null); }
                 if w.s("what") == "open" { return true; }
                 nowhere(c);
-                if w.s("what") == "new" { for (k, v) in obj(json!({ "run": null, "pick": w.at("pick"), "session": null, "transcript": null, "seen": null, "intro": false, "last": "", "where": [], "mark": null })) { c.insert(k, v); } }
+                if ["new", "handover"].contains(&w.s("what")) { for (k, v) in obj(json!({ "run": null, "pick": w.at("pick"), "session": null, "transcript": null, "seen": null, "intro": false, "last": "", "where": [], "mark": null })) { c.insert(k, v); } }
                 true
             })?;
             // Stopped is stopped: words that were still waiting stay waiting. Only something said after the stop starts it again.
@@ -176,6 +187,8 @@ fn run_pump(co: &Co, taken: &mut HashSet<String>) -> Res<()> {
             let run = get(co).map(|c| c.i("startedAt")).unwrap_or(0);
             let seq = ag.as_ref().map(|a| a.at("completion_seq").clone()).unwrap_or(Value::Null);
             let at_rest = ag.as_ref().map(|a| ["idle", "done"].contains(&a.s("agent_status"))).unwrap_or(false);
+            let scoped = m.s("text").starts_with("[MISSION-CONTROL-PROJEKT]") || m.s("text").starts_with("[MISSION-CONTROL-RESEARCH-RESULT]");
+            if (m.b("review") || scoped) && (!at_rest || get(co).map(|c| c.b("typed")).unwrap_or(false)) { stuck = true; break; }
             // Has this run of the program finished a turn since the last words went in, and is it at rest? Then
             // whatever went in a while ago has been dealt with.
             if at_rest && !seq.is_null() {
@@ -219,6 +232,7 @@ fn run_pump(co: &Co, taken: &mut HashSet<String>) -> Res<()> {
             change(co, |c| { c.put("typed", if busy { let mut t = typed.as_ref().and_then(|t| t.as_object().cloned()).unwrap_or_default(); t.put("text", words.clone()); Value::Object(t) } else { Value::Null }); true })?;
             let mark = typed.clone().unwrap_or(Value::Null);
             if !confirm(&api, c.s("pane"), typed, Some(&|| said_in(co, &mark, &words))) { crate::fail!("{UNSENT}"); }
+            if m.b("review") || scoped { stuck = true; break; }
         }
         if stuck { break; }
     }

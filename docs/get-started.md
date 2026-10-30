@@ -1,6 +1,6 @@
 # Get started
 
-You need [Herdr](https://herdr.dev) 0.9.3+ on macOS or Linux, and Claude Code, Codex, pi or another agent herdr supports.
+You need [Herdr](https://herdr.dev) 0.9.5+ on macOS or Linux, and Claude Code, Codex, pi or another agent herdr supports.
 
 ## Option A: do it yourself
 
@@ -19,7 +19,7 @@ Paste this into Claude Code, Codex or pi, running inside Herdr:
 
 ```text
 Install the herdr-projects plugin for Herdr and set it up for me.
-1. Check `herdr --version` is 0.9.3 or newer, and that git and curl (or wget) exist. Stop and tell me if not.
+1. Check `herdr --version` is 0.9.5 or newer, and that git and curl (or wget) exist. Stop and tell me if not.
 2. Run `herdr plugin install eliasstravik/herdr-projects`.
 3. Find the plugin's folder with `herdr plugin list` and run `sh <that folder>/bin/run.sh install`.
 4. Add ~/.herdr-projects/data/bin to my PATH in my shell's start-up file, so `herdr-projects` works in new shells.

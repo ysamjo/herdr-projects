@@ -36,13 +36,17 @@ fn fail_start(id: &str, title: &str, said: &str, again: &str) {
     let look = if screen.is_empty() { String::new() } else { format!("Its terminal is still open: go into the task ({}) to see all of it. ", key_name("enter")) };
     let detail = sf::detail(&w, said, &screen, &look, &log);
     sf::log(&log, &kind, &detail);
-    let _ = update_wait(id, 10000, |t| {
+    let tell = t.s("startNotified") != w.short;
+    let failed = update_wait(id, 10000, |t| {
         if t.at("runner").i("pid") != std::process::id() as i64 { return Ok(Change::Keep); }
         t.put("stage", "failed"); t.put("msg", format!("{}: {}", title.trim_end_matches(" the agent"), w.short));
         for (k, v) in failure_patch(&obj(json!({ "stage": "start", "title": title, "detail": detail, "agentCanFix": false, "auth": w.auth, "next": w.next }))) { t.insert(k, v); }
         t.obj_mut("failure").put("next", w.next.clone()); // a login too: its own next step, not "tell the agent to continue"
+        if tell { t.put("startNotified", w.short.clone()); } // the orchestrator is told once per cause
         Ok(Change::Write)
-    });
+    }).unwrap_or_default();
+    // The orchestrator waits for a result: without this it never learns that none is coming (mission_notify.rs).
+    if tell && failed.s("startNotified") == w.short { crate::mission_notify::start_failed(&failed, &w.short, &w.next); }
 }
 fn link_pane(t: &mut Task, pane: &Value, workspace: &str, owns: bool) {
     let l = t.obj_mut("link");
@@ -84,7 +88,15 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
         let mut copy = false;
         let (res, mut patch): (Value, Obj);
         if exists(t.s("worktree")) {
-            res = flow::spaces::opening_worktree(&api, &root, || api.worktree_open(&root.display().to_string(), t.s("worktree"), &label))?;
+            let mission = t.at("link").s("missionPane");
+            res = if !mission.is_empty() {
+                let board = api.pane_get(&mission).ok_or_else(|| crate::err::Error::new("Mission Control's Herdr pane is not open. Reopen the board pane and delegate again."))?;
+                let pane = mission_split(&api, &mission, &root, t.s("worktree"))?;
+                json!({ "workspace": { "workspace_id": board.at("workspace_id") }, "tab": { "tab_id": pane.at("tab_id") }, "root_pane": pane, "worktree": { "path": t.s("worktree") } })
+            } else {
+                if crate::herdr::cli::fake().is_none() { crate::fail!("Open Mission Control in a Herdr pane before starting an agent. Agents must tile beside the board; a separate task tab is not opened."); }
+                flow::spaces::opening_worktree(&api, &root, || api.worktree_open(&root.display().to_string(), t.s("worktree"), &label))?
+            };
             patch = Obj::new();
         } else if can_worktree(&root) && !t.b("startedOnce") { // a task in a repo always works in a worktree of its own
             let from = match base_ref(&root, &t) { Ok(f) => f, Err(e) => return refuse_start(g, &e.msg) };
@@ -95,9 +107,22 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
                 git_out(&root, &["update-ref", "HEAD", &c])?;
             }
             let branch = free_branch(&root, &t);
-            // An attempt works in a tab of its task's one space; any other task in a space of its own.
-            res = if t.b("attemptOf") { crate::attempts::place::open_place(&api, &root, &t, &branch, &from)? } else { flow::spaces::opening_worktree(&api, &root, || api.worktree_create(&root.display().to_string(), &branch, &from, &label))? };
-            let dir = if res.at("worktree").b("path") { res.at("worktree").t("path") } else { res.at("workspace").at("worktree").t("checkout_path") };
+            // A board started in Herdr already has its Mission Control pane. Put the agent beside it in that same
+            // workspace; Herdr 0.9.3 cannot move a worktree pane into an existing tab, so create only the git worktree.
+            let mission = t.at("link").s("missionPane");
+            res = if t.b("attemptOf") {
+                crate::attempts::place::open_place(&api, &root, &t, &branch, &from)?
+            } else if !mission.is_empty() {
+                let board = api.pane_get(&mission).ok_or_else(|| crate::err::Error::new("Mission Control's Herdr pane is not open. Reopen the board pane and delegate again."))?;
+                let dir = super::worktree::add_tiled_worktree(&root, &t, &branch, &from)?;
+                let pane = mission_split(&api, &mission, &root, &dir.display().to_string())?;
+                if !pane.b("pane_id") { crate::fail!("herdr opened no terminal pane beside Mission Control"); }
+                json!({ "workspace": { "workspace_id": board.at("workspace_id") }, "tab": { "tab_id": pane.at("tab_id") }, "root_pane": pane, "worktree": { "path": dir.display().to_string() } })
+            } else {
+                if crate::herdr::cli::fake().is_none() { crate::fail!("Open Mission Control in a Herdr pane before starting an agent. Agents must tile beside the board; a separate task tab is not opened."); }
+                flow::spaces::opening_worktree(&api, &root, || api.worktree_create(&root.display().to_string(), &branch, &from, &label))?
+            };
+            let dir = if res.at("worktree").b("path") { res.at("worktree").t("path") } else { res.at("workspace").at("worktree").t("checkout_path") }.to_string();
             // The repo's own file, read from the commit the worktree starts from: its facts, and what it was refused.
             let (facts, refused) = repo_file(&root, Some(&from));
             exclude_rule_dir(&root);
@@ -105,7 +130,15 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
             patch = obj(json!({ "worktree": dir, "branch": branch, "from": from, "baseSha": base, "repoFile": facts, "repoRefused": refused, "fresh": true, "ownNote": true }));
             copy = true;
         } else {
-            res = api.workspace_create(&root.display().to_string(), &label, &board_env())?;
+            let mission = t.at("link").s("missionPane");
+            res = if !mission.is_empty() {
+                let board = api.pane_get(&mission).ok_or_else(|| crate::err::Error::new("Mission Control's Herdr pane is not open. Reopen the board pane and delegate again."))?;
+                let pane = mission_split(&api, &mission, &root, &root.display().to_string())?;
+                json!({ "workspace": { "workspace_id": board.at("workspace_id") }, "tab": { "tab_id": pane.at("tab_id") }, "root_pane": pane })
+            } else {
+                if crate::herdr::cli::fake().is_none() { crate::fail!("Open Mission Control in a Herdr pane before starting an agent. Agents must tile beside the board; a separate task tab is not opened."); }
+                api.workspace_create(&root.display().to_string(), &label, &board_env())?
+            };
             if is_repo(&root) { exclude_rule_dir(&root); }
             let (facts, refused) = if t.at("repoFile").is_object() { (t.o("repoFile").cloned().unwrap_or_default(), strings(t.at("repoRefused"))) } else { repo_file(&root, None) };
             patch = obj(json!({ "repoFile": facts, "repoRefused": refused, "fresh": !t.b("startedOnce"), "startMark": if is_repo(&root) { r::start_mark(&root) } else { None } }));
@@ -120,8 +153,9 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
             let f = t.obj_mut("fallbacks");
             if refused.is_empty() { f.del("repoFile"); } else { f.put("repoFile", refused.join("\n")); }
             t.put("root", root2.display().to_string()); t.put("startedOnce", true);
-            let owns = !t.b("attemptOf");
+            let owns = !t.b("attemptOf") && t.at("link").s("missionPane").is_empty();
             link_pane(t, &pane, &ws, owns);
+            if !t.at("link").s("missionPane").is_empty() { t.obj_mut("link").put("agentPaneCreated", true); }
             if res.at("tab").b("tab_id") { t.obj_mut("link").put("tab", res.at("tab").at("tab_id").clone()); }
         })?;
         if copy { copy_includes(&root, Path::new(t.s("worktree")), &list_of(&setting("workspace.include", Some(&t)))); }
@@ -188,14 +222,22 @@ fn restart_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
     if pane.is_none() {
         let ws = if t.at("link").b("workspace") { api.workspace_get(t.at("link").s("workspace")) } else { None };
         if ws.is_some() && t.b("attemptOf") { pane = crate::attempts::place::reopen_place(&api, &t)?; } // an attempt: a tab of its own again
-        else if let Some(ws) = &ws { if let Some(first) = api.panes(Some(ws.s("workspace_id")))?.into_iter().next() { pane = Some(api.pane_split(first.s("pane_id"), &cwd_of(&t).display().to_string(), "right", &board_env())?); } }
+        else if let Some(ws) = &ws {
+            let anchor = api.pane_get(t.at("link").s("missionPane")).filter(|p| p.s("workspace_id") == ws.s("workspace_id"))
+                .or_else(|| api.panes(Some(ws.s("workspace_id"))).ok()?.into_iter().next());
+            if let Some(anchor) = anchor { pane = Some(api.pane_split(anchor.s("pane_id"), &cwd_of(&t).display().to_string(), "right", &board_env())?); }
+        }
         if pane.is_none() {
             let res = if exists(t.s("worktree")) { flow::spaces::opening_worktree(&api, &root, || api.worktree_open(&root.display().to_string(), t.s("worktree"), &flow::sidebar::space_label(&t)))? }
                 else { api.workspace_create(&cwd_of(&t).display().to_string(), &flow::sidebar::space_label(&t), &board_env())? };
             pane = Some(root_pane(&api, &res)?);
         }
         let p = pane.clone().unwrap();
-        t = g.set(|t| { let owns = !t.b("attemptOf"); link_pane(t, &p, "", owns); })?;
+        t = g.set(|t| {
+            let owns = !t.b("attemptOf") && t.at("link").s("missionPane").is_empty();
+            link_pane(t, &p, "", owns);
+            if !t.at("link").s("missionPane").is_empty() { t.obj_mut("link").put("agentPaneCreated", true); }
+        })?;
     }
     t = agent_now(g, t)?;
     // A start that was asked for and never got as far as its agent (its setup failed): this is that start.
@@ -236,4 +278,10 @@ pub fn reopen(id: &str, restart: bool) -> Res<(Value, bool, Task)> {
 /// agent in it its workspace and tab. Used by "go into the task" here and from another machine.
 pub fn bring_forward(api: &Herdr, pane: &Value, has_agent: bool) -> crate::herdr::cli::HRes<()> {
     if has_agent { api.agent_focus(pane.s("pane_id")).map(|_| ()) } else { api.workspace_focus(pane.s("workspace_id")).map(|_| { let _ = api.tab_focus(pane.s("tab_id")); }) }
+}
+
+fn mission_split(api: &Herdr, anchor: &str, folder: &Path, cwd: &str) -> Res<Value> {
+    match crate::mission_control::split_task(api, folder, cwd, &board_env())? {
+        Some(pane) => Ok(pane), None => Ok(api.pane_split(anchor, cwd, "right", &board_env())?),
+    }
 }

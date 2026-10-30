@@ -22,6 +22,24 @@ fn tell(id: &str, words: &str) { sw::actions::talk::tell(id, words, false).unwra
 fn approve(id: &str) { sw::actions::finish_line::approve(id, None, false).unwrap(); }
 
 #[test]
+fn freebuff_and_codebuddy_use_their_plugin_reported_interactive_split_panes() {
+    for kind in ["freebuff", "codebuddy"] {
+        let w = world_with(Opts { repo: true, settings: json!({ "worker.agent": kind, "review.when": "never" }), ..Default::default() });
+        w.script(json!({ "worker": [{ "files": { "a.txt": "done\n" }, "commit": "done", "note": "Read the fixture and finished." }] }));
+        let id = w.add(&format!("Interactive {kind}"));
+        delegate(&id);
+        let t = settle(&id);
+        assert_eq!(t.s("stage"), "approval", "{} {}", kind, t.at("failure"));
+        let pane = w.pane_of(&t);
+        assert_eq!(pane.at("agent").s("kind"), kind);
+        assert_eq!(pane.at("tab_id"), t.at("link").at("tab"));
+        let calls = calls(&w);
+        assert!(calls.iter().any(|c| c.starts_with(&format!("pane run {} ", t.at("link").s("pane"))) && c.contains("HERDR_PROJECTS_AGENT=")), "{kind}: {calls:?}");
+        assert!(!calls.iter().any(|c| c.starts_with("agent start ") && c.contains(&format!("--kind {kind}"))), "{kind}: {calls:?}");
+    }
+}
+
+#[test]
 fn the_settings_are_read_when_their_step_starts_and_a_stop_with_no_plan_is_a_failure_the_agent_can_fix() {
     let w = plan_world(json!({ "worker.agent": "codex", "review.when": "never" }), "bwrap");
     // Asked for at the start, taken off while the plan is being written: nobody is asked, and it builds.
@@ -66,12 +84,12 @@ fn without_a_read_only_mount_no_plan_is_written_in_a_repo_and_a_plan_said_not_sa
     delegate(&none);
     let t = settle(&none);
     assert_eq!((t.s("stage"), t.at("plan").is_null(), t.at("failure").s("title")), ("failed", true, "Could not start the agent"));
-    assert!(t.at("failure").s("detail").contains("needs bubblewrap") && t.at("failure").s("detail").contains("set plan.approve none --task proj/1"), "{}", t.at("failure"));
+    assert!(t.at("failure").s("detail").contains("Nothing was started") && t.at("failure").s("detail").contains("set plan.approve none --task proj/1"), "{}", t.at("failure"));
     assert!(!w.state().arr("panes").iter().any(|p| p.at("agent").is_object()), "no program was started");
     assert!(!is_locked(&t));
     let mut open = t.clone(); open.put("plan", json!({ "asked": 1, "by": "you" }));
     let api = sw::herdr::Herdr::new(Some(w.socket.clone()));
-    assert!(sw::plan::sandbox::start_program(&api, &open, "x", "codex", "p", &[]).unwrap_err().message.contains("needs bubblewrap"), "nor an open plan step's writer, started again later");
+    assert!(sw::plan::sandbox::start_program(&api, &open, "x", "codex", "p", &[]).unwrap_err().message.contains("Nothing was started"), "nor an open plan step's writer, started again later");
     // With the plan taken off it starts as any task does.
     delegate_with(&none, json!({ "plan.approve": "none" }));
     w.script(json!({ "worker": [{ "status": "working" }] }));
@@ -121,13 +139,16 @@ fn a_plan_and_several_attempts_the_plan_is_approved_once_then_every_attempt_is_h
     let (a, b) = (&all[0], &all[1]);
     assert_eq!(t.arr("attempts").iter().map(|x| (x.t("letter"), x.t("agent"))).collect::<Vec<_>>(), vec![("A".to_string(), "codex".to_string()), ("B".into(), "claude".into())]);
     assert_eq!((a.s("worktree"), a.at("link").s("pane")), (tree.as_str(), pane.as_str()));
-    assert!(b.b("worktree") && b.s("worktree") != tree && std::path::Path::new(b.s("worktree")).exists());
+    assert!(b.b("worktree") && b.s("worktree") != tree && std::path::Path::new(b.s("worktree")).exists(), "{b:?}");
     assert_eq!(b.at("link").s("workspace"), space);
     assert!(!is_locked(a));
     assert!(a.at("plan").is_null() && b.at("plan").is_null(), "an attempt has no plan step of its own");
-    let mut tabs: Vec<String> = w.state().arr("tabs").iter().filter(|x| x.s("workspace_id") == space).map(|x| x.t("label")).collect();
-    tabs.sort();
-    assert_eq!(tabs, vec!["Agent A", "Agent B"]);
+    let state = w.state();
+    let tabs: Vec<_> = state.arr("tabs").iter().filter(|x| x.s("workspace_id") == space).collect();
+    assert_eq!(tabs.len(), 1, "attempts share the task's tab");
+    let panes: Vec<_> = state.arr("panes").iter().filter(|x| x.s("workspace_id") == space).collect();
+    assert!(panes.iter().any(|p| p.t("pane_id") == a.at("link").t("pane")));
+    assert!(panes.iter().any(|p| p.t("pane_id") == b.at("link").t("pane")));
     for c in [a, b] {
         let p = w.pane_of(c);
         assert!(!p.at("agent").b("boxed"));

@@ -4,15 +4,26 @@ use crate::common;
 use common::*;
 use sw::json::*;
 
-/// The program run in the world's repo: its exit code, what it printed and what it said went wrong.
-fn run(w: &World, args: &[&str]) -> (i32, String, String) {
+/// The program run in the world's repo, with environment of its own (a pane's, say): its exit code, what it printed
+/// and what it said went wrong.
+fn run_with(w: &World, args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_herdr-projects")).args(args).current_dir(&w.root)
-        .env("HERDR_SOCKET_PATH", "/nonexistent").env("HERDR_BIN_PATH", "/bin/false").output().unwrap();
+        .env("HERDR_SOCKET_PATH", "/nonexistent").env("HERDR_BIN_PATH", "/bin/false").envs(env.iter().copied()).output().unwrap();
     (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
 }
+fn run(w: &World, args: &[&str]) -> (i32, String, String) { run_with(w, args, &[]) }
 fn out(w: &World, args: &[&str]) -> String { let (code, o, e) = run(w, args); assert_eq!(code, 0, "{args:?}: {e}"); o }
 fn refused(w: &World, args: &[&str], re: &str) { let (code, o, e) = run(w, args); assert_ne!(code, 0, "{args:?} was not refused: {o}"); assert!(regex::Regex::new(re).unwrap().is_match(&e), "{args:?}: {e}"); }
 fn tasks() -> Vec<Obj> { sw::store::tasks::list(Default::default()) }
+/// A task waiting for its merge, with a link to the pane of the agent that worked on it.
+fn ready_to_approve(w: &World, title: &str, pane: &str) -> String {
+    let id = w.add(title);
+    sw::store::tasks::patch(&id, |t| {
+        t.put("stage", "approval"); t.put("msg", "Ready to merge"); t.put("reviewedHead", serde_json::json!("f".repeat(40)));
+        t.obj_mut("link").put("pane", pane); t.obj_mut("link").put("socket", w.socket.clone());
+    }).unwrap();
+    id
+}
 
 #[test]
 fn real_programs_add_list_report_set_unset_and_show() {
@@ -74,4 +85,30 @@ fn real_programs_a_flag_a_command_does_not_know_is_refused_with_the_nearest_righ
     assert!(regex::Regex::new(r"\n\* review\.when +never +this task\n").unwrap().is_match(&out(&w, &["show", t.s("id")])));
     assert!(out(&w, &["list", "--archived"]).contains("No tasks"));
     assert!(out(&w, &["list", "--all", "--query", "kept"]).contains("Kept settings"));
+}
+
+#[test]
+fn real_programs_an_agents_own_pane_cannot_approve_its_work_even_with_anyway() {
+    let w = world();
+    let id = ready_to_approve(&w, "Work", "worker-pane");
+    for args in [vec!["approve", "1"], vec!["approve", "1", "--anyway"]] {
+        let (code, o, e) = run_with(&w, &args, &[("HERDR_PANE_ID", "worker-pane"), ("HERDR_SOCKET_PATH", &w.socket)]);
+        assert_ne!(code, 0, "{args:?} was not refused: {o}");
+        assert!(e.contains("this command ran in the agent pane of PRJ-1"), "{args:?}: {e}");
+        assert!(e.contains("Nothing was merged"), "{args:?}: {e}");
+        assert_eq!(task(&id).s("stage"), "approval", "{args:?}");
+        assert!(!task(&id).b("mergeIntent"), "{args:?}");
+    }
+}
+
+#[test]
+fn real_programs_approve_outside_an_agents_pane_works_and_records_where_the_yes_came_from() {
+    let w = world();
+    let id = ready_to_approve(&w, "Work", "worker-pane");
+    out(&w, &["approve", "1"]);
+    let t = task(&id);
+    assert_eq!(t.s("stage"), "merging");
+    let via = t.at("mergeIntent").t("approvedVia");
+    assert!(["terminal", "session"].contains(&via.as_str()), "{via}");
+    assert_eq!(t.at("mergeIntent").s("verifiedHead"), "f".repeat(40));
 }

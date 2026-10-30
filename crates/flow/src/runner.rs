@@ -122,7 +122,9 @@ impl Guard {
     pub fn check(&self) -> Res<Task> {
         let t = get(&self.id).ok_or_else(|| aborted("the task is gone"))?;
         if t.b("archivedAt") { return Err(aborted("archived")); }
-        self.still(&t)?;
+        // A free guard is no job's: it is asked to change a task whose runner may be gone by now (a start on reopen),
+        // so it has no runner, stage or turn of its own to be measured against.
+        if !self.free { self.still(&t)?; }
         if self.new_turn(&t) { return Err(aborted("the agent finished a new turn")); }
         Ok(t)
     }

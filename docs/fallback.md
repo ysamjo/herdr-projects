@@ -37,9 +37,34 @@ The working agent **cannot go on** in three cases:
 So for one turn that ends badly, the order is: **the board's own tries (only for an error that passes) → the next agent
 on `worker.fallback` → you.**
 
+What is known about the allowance behind each program is kept for the whole machine, so a hand-over to another model of
+the same subscription does not land in the same empty budget: [what is known about each allowance](quota.md).
+
 **Not handed over**, as before: when the agent stops and says it waits for you, when it stops without a summary, when you
 stop it, for a conflict with main or feedback on its pull request, or while a merge you approved is being repaired.
 Those are yours.
+
+## One rule for every role
+
+A worker, a reviewer and a coordinator are decided by the same rule, in one place
+(`crates/core/src/store/rule.rs`), so they cannot drift apart:
+
+| What the provider said | What happens |
+| --- | --- |
+| a login is needed | hand over at once — waiting does not log in |
+| out of allowance | hand over at once (`out of allowance until 17:00`) |
+| passes by itself: at capacity, overloaded, a rate limit, a dropped connection | wait 1, 2, 4 and 8 minutes, asking the same agent each time; then hand over |
+| its model is not there, or the provider refuses | hand over at once |
+
+The waits are the board's own and are read by all three: `HERDR_PROJECTS_RETRY_MS`
+(`60000,120000,240000,480000` by default, milliseconds, comma-separated) changes them for the whole machine. What is
+known about a subscription counts first: an allowance that is empty is not waited out, because another model of the
+same subscription is the same empty budget ([allowances](quota.md)).
+
+**The coordinator follows the same rule.** While its provider's error passes by itself it is asked to carry on in its
+own session after each wait (`controlRetry` on its state: `{ error, until, tries }`); only when the waits are used up
+does the next program on the order take over, with the hand-over file as before. So an overloaded provider no longer
+costs the coordinator its session at the first error.
 
 ## What a hand-over is
 
@@ -50,6 +75,8 @@ program that cannot go on is ended, and the next one starts where it was. It is 
 - that it takes over, from whom and why, and to look at what is there and carry on, not start over;
 - **what was done so far**: the commits on the branch, whether changes lie uncommitted, and the last message of the agent
   before it;
+- **what the check last said**: the revision and command it passed on (so an old pass is not taken for the current
+  revision), or the output of the check that failed;
 - **the open findings**: what the last review found, when that review failed, or the failed check's output.
 
 The new agent:
@@ -57,6 +84,32 @@ The new agent:
 - runs on the model its entry names (`claude/claude-opus-5-5`), else its program's own;
 - takes the task's `worker.effort` and `worker.access`, where its program takes them;
 - starts with rounds of its own: what the agent before it used up does not count against it.
+
+### Geprüfte Übergabe bei Kontingentende
+
+Die Übergabe nennt Arbeitsverzeichnis, Ausgangsrevision, aktuelles HEAD und die
+Pfade aller noch nicht committeten Änderungen, einschließlich neuer Dateien.
+Binärdateien bleiben im selben Worktree erhalten. Eine letzte Zusammenfassung
+der alten CLI ist nicht erforderlich. Die neue CLI soll den vorhandenen Stand
+zuerst prüfen und externe Aktionen wie Push oder PR-Anlage vor einer Wiederholung
+abgleichen; deren einmalige Ausführung ist dadurch nicht garantiert.
+
+Ein Fehler beim Abruf des alten Agentenstatus bedeutet **unbekannt**, nicht
+„beendet“. In diesem Fall startet keine weitere CLI, und die Aufgabe zeigt den
+Grund unter `worker.fallback`. Wenn der alte Agent noch vorhanden ist, muss
+Herdr dessen Beendigung bestätigen, bevor der Nachfolger startet.
+
+Der Regressionstest läuft über den regulären Prüfweg:
+
+```sh
+npm run check quota_handoff handoff_waits
+```
+
+Er verwendet echte Git-Worktrees und geskriptete CLIs: Die erste CLI committet
+einen Teil, hinterlässt weitere Änderungen samt neuer Binärdatei und meldet ein
+Kontingentende. Die zweite CLI ergänzt den Rest; der konfigurierte Check muss
+erfolgreich sein. Task-ID, Branch und Pane bleiben erhalten. Dies ist ein
+automatisierter Integrationsnachweis, keine Live-Abnahme der Anbieter-CLIs.
 
 A yes you had given to the earlier work is asked for again.
 
@@ -156,6 +209,8 @@ The hand-over is one function (`hand_over` in `crates/flow/src/finish/hand_over.
 reason.
 
 - `crates/core/src/store/handovers.rs`: what is kept on the task, the next on the list, the words;
+- `crates/core/src/store/rule.rs`: wait or hand over — the one decision for every role;
 - `crates/flow/src/finish/hand_over.rs`: the working agent's hand-over;
 - `crates/flow/src/finish/review_fallback.rs`: the reviewer's;
-- tests: `tests/fallback.rs`, `tests/fallback_more.rs` and `tests/fallback_settings.rs`.
+- `crates/flow/src/mission_fallback.rs`: the coordinator's, on the global CLI order;
+- tests: `tests/fallback.rs`, `tests/fallback_more.rs`, `tests/fallback_settings.rs` and `tests/rule.rs`.

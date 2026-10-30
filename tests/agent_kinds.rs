@@ -21,7 +21,7 @@ fn taken(name: &str, value: &str) -> String { set_value(name, &json!(value), &Sc
 fn every_program_herdr_has_an_integration_for_is_in_the_table_and_starts_on_its_own_flags() {
     let _w = world();
     for k in ["claude", "codex", "pi", "agy", "copilot", "cursor", "devin", "droid", "grok", "hermes", "kilo", "kimi", "letta", "mastracode", "omp", "opencode", "qodercli", "qwen"] { assert!(kind(k).is_some(), "{k}"); }
-    assert_eq!(all().count(), 18);
+    assert_eq!(all().count(), 23);
     assert!(all().all(|k| !k.checked.is_empty()), "every program says what was tried on which version");
     // Model, effort and full access, each in the program's own words.
     assert_eq!(args("agy", opts("gemini-3-pro", "high")), ["--dangerously-skip-permissions", "--model", "gemini-3-pro", "--effort", "high"]);
@@ -55,18 +55,24 @@ fn every_program_herdr_has_an_integration_for_is_in_the_table_and_starts_on_its_
 }
 
 #[test]
-fn the_watcher_one_shot_of_each_program_comes_from_the_table() {
+fn watcher_one_shots_are_limited_to_programs_outside_the_interactive_pool() {
     let _w = world();
     let shot = |k: &str, model: &str, system: &str| -> OneShot { one_shot(k, model, "", "How far along?", system, false).unwrap_or_else(|| panic!("{k}")) };
-    let a = shot("agy", "gemini-3-flash", "Answer in one line.");
-    assert_eq!((a.command.as_str(), a.args.clone(), a.stdin), ("agy", vec!["--disable-slash-commands", "--model", "gemini-3-flash", "-p", "Answer in one line.\n\nHow far along?"].into_iter().map(String::from).collect(), None));
+    assert!(one_shot("agy", "", "", "How far along?", "", false).is_none(), "Antigravity stays in its visible terminal pane");
     // Instructions by the program's own flag where it has one, else above the prompt.
     let d = shot("droid", "", "Answer in one line.");
     assert_eq!(d.args, ["exec", "--append-system-prompt", "Answer in one line.", "How far along?"]);
-    let c = shot("cursor", "", "");
-    assert_eq!(c.command, "cursor-agent");
-    assert_eq!(c.args.last().unwrap(), "How far along?");
-    for k in all() { assert!(one_shot(k.name, "", "", "p", "", false).is_some(), "{} has a one-shot", k.name); }
+    assert!(one_shot("cursor", "", "", "How far along?", "", false).is_none());
+    let interactive_pool = ["freebuff", "codebuddy", "claude", "codex", "agy", "cursor", "opencode", "kiro", "cline", "qodercli", "grok"];
+    let plugin = include_str!("../herdr-control/scripts/priority.sh");
+    for k in all() {
+        if interactive_pool.contains(&k.name) { assert!(one_shot(k.name, "", "", "p", "", false).is_none(), "{} must stay interactive", k.name); }
+    }
+    let mut plugin_pool: Vec<String> = plugin.split("allowed = {").nth(1).unwrap().split('}').next().unwrap()
+        .split(',').map(|name| name.trim().trim_matches('"').to_string()).collect();
+    let mut expected: Vec<String> = interactive_pool.iter().map(|name| name.to_string()).collect();
+    plugin_pool.sort(); expected.sort();
+    assert_eq!(plugin_pool, expected, "Herdr Control and the interactive CLI pool must match exactly");
 }
 
 #[test]

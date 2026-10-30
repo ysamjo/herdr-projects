@@ -61,7 +61,7 @@ fn settings_the_built_in_values_your_own_one_tasks_own() {
     let w = world();
     use sw::store::settings_list::{entry_of, Kind, SETTINGS};
     assert_eq!(setting("worker.agent", None), json!("claude")); assert_eq!(setting("reviewer.agent", None), json!("codex"));
-    assert_eq!(entry_of("watcher.agent").unwrap().builtin, json!("claude/claude-haiku-5-5"));
+    assert_eq!(entry_of("watcher.agent").unwrap().builtin, json!("none"));
     assert_eq!(setting("board.agents", None), json!(4));
     set_value("board.agents", &json!("2"), &Scope::you()).unwrap(); assert_eq!(setting("board.agents", None), json!(2));
     assert!(set_value("merge.method", &json!("yolo"), &Scope::you()).unwrap_err().msg.contains("squash, merge, rebase"));
@@ -85,6 +85,17 @@ fn the_inbox_never_drops_text_and_taken_text_can_be_put_back() {
 }
 
 #[test]
+fn a_broken_line_in_a_jsonl_file_keeps_the_lines_that_are_whole() {
+    let _w = world();
+    let file = sw::store::files::data_dir().join("lines.jsonl");
+    std::fs::write(&file, "{\"ok\":1}\nnot json\n{\"ok\":2}\n").unwrap();
+    let got = sw::store::files::read_lines(&file);
+    assert_eq!(got.iter().map(|v| v.i("ok")).collect::<Vec<_>>(), vec![1, 2]);
+    std::fs::write(&file, "{\"ok\":3}\n").unwrap();
+    assert_eq!(sw::store::files::read_lines(&file).len(), 1);
+}
+
+#[test]
 fn login_failures_are_recognised_from_diagnostics_not_from_test_names_or_assertions() {
     use sw::store::failures::is_auth_failure;
     assert!(is_auth_failure("fatal: could not read Username for 'https://github.com': terminal prompts disabled"));
@@ -97,7 +108,7 @@ fn login_failures_are_recognised_from_diagnostics_not_from_test_names_or_asserti
 #[test]
 fn minutes_left_come_from_the_percent_and_the_time_spent_and_move_as_time_passes() {
     use sw::state::{began, eta_of, role_of, show};
-    let _w = world_with(Opts { settings: json!({ "watcher.agent": "claude" }), ..Default::default() }); // a row's words read the settings
+    let _w = world_with(Opts { settings: json!({ "watcher.agent": "pi" }), ..Default::default() }); // a row's words read the settings
     let (min, t0) = (60000i64, 1_000_000_000_000i64);
     assert_eq!(eta_of(&json!(80), t0, t0 + 40 * min), Some(10)); // 40 minutes in at 80% is 10 left
     assert_eq!(eta_of(&json!(50), t0, t0 + 7 * min + 24000), Some(7)); // whole minutes

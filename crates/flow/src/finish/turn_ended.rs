@@ -10,6 +10,7 @@ use super::review::close_reviewer;
 use super::shared::{fail, failure, last_lines, ms, FailHow};
 use super::waiting::{stay, waits};
 use crate::agents::{adapter, helpers::still_at_work, installed, kinds::kind, read_turn::Turn};
+use crate::agents::provider_error::provider_error;
 use crate::board::keys::key_name;
 use crate::clock::now;
 use crate::err::Res;
@@ -20,10 +21,10 @@ use crate::limits::reached::{stop_at, tokens_over, StopHow};
 use crate::runner::{is_aborted, release, Guard};
 use crate::store::failures::{failure_patch, is_auth_failure};
 use crate::store::files::{dir_of, marker, marker_alive};
-use crate::store::handovers::{fresh_list, why_of};
+use crate::store::handovers::fresh_list;
 use crate::store::marks::{count_mark, pending_events};
 use crate::store::repos::cwd_of;
-use crate::store::retries::{gave_up, retry_waits};
+use crate::store::retries::gave_up;
 use crate::store::tasks::{get, one_line, update_wait, Change, Task};
 use crate::submit::pending_sent;
 use std::path::Path;
@@ -55,6 +56,24 @@ fn human_turn(t: &mut Task) {
 /// Has this task's agent begun on anything since its program was started?
 fn begun(t: &Task) -> bool { t.at("handled").b("at") || t.s("turnBy") == "typed" || t.i("workedAt") >= t.i("startedAgentAt").max(1) }
 fn sleep(ms: i64) { std::thread::sleep(std::time::Duration::from_millis(ms.max(0) as u64)); }
+/// Interactive CLIs without a transcript reader still expose a finished provider error in Herdr's idle pane.
+/// Restrict this fallback to unmistakable error language in the last screen lines; ordinary task text is not enough.
+pub fn screen_error(api: &crate::herdr::Herdr, pane: &str, a: Option<&Value>) -> Option<Turn> {
+    let status = a.map(|x| x.s("agent_status"));
+    if !matches!(status.as_deref(), Some("idle" | "done")) { return None; }
+    let screen = crate::agents::screen_text::screen_text(&read_screen(api, pane));
+    let words = last_lines(&screen, 12);
+    let lower = words.to_lowercase();
+    let marker = ["quota", "usage limit", "rate limit", "too many requests", "429", "529", "at capacity",
+        "overloaded", "billing", "credit balance", "out of credits", "401 unauthorized", "403 forbidden",
+        "authentication failed", "logged out", "model not found", "unknown model", "unsupported model",
+        "service unavailable", "internal server error", "connection dropped", "fetch failed"];
+    if !marker.iter().any(|needle| lower.contains(needle)) { return None; }
+    let classified = provider_error(&words, "", 0);
+    Some(Turn { id: format!("screen-error-{}", now()), pos: now(), error: words,
+        auth: classified.auth || is_auth_failure(&screen), passing: classified.passing,
+        reason: classified.reason, ..Default::default() })
+}
 fn finish_once(id: &str, force: bool) -> bool {
     let Some(t) = get(id) else { return false };
     if !flow::task::is_agent_task(&t) { return false; }
@@ -112,6 +131,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
             if now() >= until { break; }
             sleep(400);
         }
+        if turn.is_none() && !reads { turn = screen_error(&api, &pane, a.as_ref()); }
         if reads { let _ = count_mark(&format!("reader:{k}"), &ver, turn.is_some()); }
         let _ = count_mark(&format!("hook:{k}"), &ver, true);
         if let Some(x) = &turn { if !(newer(Some(x), &t) && ((x.finished && x.id != t.at("handled").s("msg")) || !x.error.is_empty())) { return Ok(()); } } // a repeat, or an earlier turn
@@ -129,6 +149,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
             if let Some(s) = adapter::find_session(&k, &cwd_of(&t), if t.b("startedAgentAt") { t.i("startedAgentAt") } else { t.i("armedAt") }, &crate::delegate::task_line(&t)) { session = s.clone(); let _ = update_wait(id, 10000, |t| { t.put("session", s.clone()); Ok(Change::Write) }); }
         }
         turn = installed::read_turn_of(&k, t.so("transcript").map(Path::new), &session, &cwd_of(&t), false);
+        if turn.is_none() && !reads { turn = screen_error(&api, &pane, a.as_ref()); }
         let says = newer(turn.as_ref(), &t) && turn.as_ref().map(|x| x.pos > t.i("armedAt") && ((x.finished && x.id != t.at("handled").s("msg")) || !x.error.is_empty())).unwrap_or(false);
         match &a {
             None => { if !(says && turn.as_ref().map(|x| !x.error.is_empty()).unwrap_or(false)) { return Ok(()); } } // the agent exited: a crash still shows its real last error
@@ -176,22 +197,28 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
     };
     if let Some(x) = turn.as_ref().filter(|x| !x.error.is_empty() || x.stop == "length" || x.stop == "refusal") {
         let why = if !x.error.is_empty() { x.error.clone() } else if x.stop == "length" { "The agent's reply was cut off: it ran out of room (context or output limit).".into() } else { "The model refused to continue.".into() };
+        // What this subscription is known to be now, for every other task and every model of it too (store/quota.rs).
+        if !x.error.is_empty() {
+            let state = if x.auth { crate::store::quota::LOGIN } else if crate::store::quota::out_of_allowance(&x.error) { crate::store::quota::EXHAUSTED } else { crate::store::quota::DEGRADED };
+            crate::store::quota::note(&crate::store::quota::group_of(&k), state, &x.error, crate::store::quota::reset_ms(&x.error, now()), id);
+        }
         g.set(&keep)?;
-        // A passing provider error is nobody's to fix: the board waits and tells the agent to carry on, a few times with
-        // growing waits, before it gives up. A turn that was itself such a retry counts on from the one before.
+        // The one rule every role follows (store/rule.rs): an error that passes by itself is waited out and the agent
+        // told to carry on, a few times with growing waits; a login or an empty allowance hands the task over at once.
+        // A turn that was itself such a retry counts on from the one before.
         let tries = if wake.s("reason") == "retry" && wake.b("tries") { wake.i("tries") } else { t.at("cutRetry").i("tries") };
-        let waits_ms = retry_waits();
-        if x.passing && tries < waits_ms.len() as i64 {
+        let step = crate::store::rule::next(&crate::store::rule::Cut { error: &x.error, reason: &x.reason, auth: x.auth, passing: x.passing, tries });
+        if let Some((ms, done)) = step.waiting() {
             if let Some((limit, used)) = tokens_over(id, "agent") { stop_at(id, "tokens", &limit, used, StopHow::default()); return Ok(()); }
             let keep_intent = (wake.b("keepIntent") || t.at("cutRetry").b("keepIntent")) && t.b("mergeIntent");
-            let mut f = failure("agent", "Agent cut off", &format!("{why}\n\nThe {}. That passes by itself: the board tells the agent to carry on, up to {} times with growing waits.", gave_up("agent", &x.reason, 1), waits_ms.len()), &format!("Nothing: the board tells the agent to continue by itself. Reply or press {} to do it now.", key_name("sendBack")));
+            let mut f = failure("agent", "Agent cut off", &format!("{why}\n\nThe {}. That passes by itself: the board tells the agent to carry on, up to {} times with growing waits.", gave_up("agent", &x.reason, 1), crate::store::rule::waits().len()), &format!("Nothing: the board tells the agent to continue by itself. Reply or press {} to do it now.", key_name("sendBack")));
             f.put("auth", false); f.put("agentCanFix", true);
             let w = g.set(|t| {
                 t.put("stage", "failed"); t.put("msg", format!("Agent stopped: {}", one_line(&why, 200)));
                 if !keep_intent { t.put("mergeIntent", Value::Null); }
                 for (k, v) in failure_patch(&f) { t.insert(k, v); }
                 let at = t.at("failure").at("at").clone();
-                t.put("waiting", json!({ "who": "agent", "reason": x.reason, "error": one_line(&why, 400), "until": now() + waits_ms[tries as usize], "tries": tries + 1, "keepIntent": keep_intent, "for": at }));
+                t.put("waiting", json!({ "who": "agent", "reason": x.reason, "error": one_line(&why, 400), "until": now() + ms, "tries": done, "keepIntent": keep_intent, "for": at }));
             })?;
             flow::sidebar::tell_sidebar(&w);
             return Ok(());
@@ -200,7 +227,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
         let refused = if x.error.is_empty() || x.auth || x.passing { None } else { crate::agents::model_refused::read(&k, &x.error) };
         if let Some(r) = &refused { if model_refused::on_default(id, g, &t, r)? { return Ok(()); } }
         // It cannot go on: the next agent on `worker.fallback` takes the task over; with nobody left it waits for you.
-        let hw = if let Some(r) = &refused { r.plain.clone() } else if !x.error.is_empty() { why_of(&why, x.auth, x.passing, &x.reason, tries + 1, now()) } else if x.stop == "length" { "it ran out of room (context or output limit)".into() } else { "its model refused to continue".into() };
+        let hw = if let Some(r) = &refused { r.plain.clone() } else if !x.error.is_empty() { step.hand().unwrap_or_default() } else if x.stop == "length" { "it ran out of room (context or output limit)".into() } else { "its model refused to continue".into() };
         if hand_over(id, g, &hw, "")? { return Ok(()); }
         if let Some(r) = &refused { return model_refused::fail_refused(g, &t, r, &why); }
         if x.passing {
@@ -219,9 +246,10 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
     let finished = turn.as_ref().map(|x| x.finished).unwrap_or(false);
     if !finished && fresh_note.is_none() && wake.is_null() {
         // Nothing says the turn finished normally: commit nothing and hold, with what is on the screen as the message.
-        let screen = last_lines(&crate::agents::screen_text::screen_text(&read_screen(&api, &pane, a.as_ref().map(|a| a.s("agent_status")), 60)), 12); // its words, not its frames
+        let screen = last_lines(&crate::agents::screen_text::screen_text(&read_screen(&api, &pane)), 12); // its words, not its frames
         if is_auth_failure(&screen) {
             g.set(&keep)?;
+            crate::store::quota::note(&crate::store::quota::group_of(&k), crate::store::quota::LOGIN, &screen, 0, id);
             if hand_over(id, g, "logged out", "")? { return Ok(()); }
             let mut f = failure("agent", "Needs a login", &screen, ""); f.put("auth", true); f.put("msg", "Needs a login"); f.del("next");
             fail(g, f, FailHow::default())?;
@@ -231,6 +259,8 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
         return Ok(());
     }
     if t.b("cutRetry") { g.set(|t| t.put("cutRetry", Value::Null))?; } // the turn ended by itself: a later cut-off counts again
+    // It answered: nothing is known against this subscription any more (store/quota.rs).
+    crate::store::quota::release(&crate::store::quota::group_of(&k));
     let said = if finished { turn.as_ref().map(|x| x.said.clone()).unwrap_or_default() } else if let Some(n) = &fresh_note { n.1.clone() } else { t.t("said") };
     if let Some(n) = &fresh_note { let _ = std::fs::write(dir_of(id).join("closing.md"), format!("{}\n", n.1)); }
     let agent_session = a.as_ref().map(|a| a.at("agent_session").t("value")).unwrap_or_default();

@@ -23,6 +23,26 @@ fn unsaved_files_in_your_checkout_stop_the_merge_and_nothing_is_forced() {
 }
 
 #[test]
+fn a_merge_whose_approval_names_no_commit_does_not_merge_and_asks_again() {
+    let w = world_with(Opts { repo: true, settings: json!({ "review.when": "never" }), ..Default::default() });
+    let id = to_approval(&w, "Work");
+    sw::store::tasks::patch(&id, |t| {
+        t.put("stage", "merging"); t.put("msg", "Merging");
+        t.put("mergeIntent", json!({ "approvedAt": sw::clock::now(), "repairs": 0 }));
+    }).unwrap();
+    sw::jobs::run_job("land", &id, &[]);
+    let t = task(&id);
+    assert_eq!(t.s("stage"), "approval", "{}", t.at("failure"));
+    assert_eq!(t.at("failure").s("title"), "Merge has no checked commit bound to it");
+    assert!(t.at("failure").t("next").contains("Approve again"), "{}", t.at("failure"));
+    assert!(!w.root.join("f.txt").exists(), "nothing was merged");
+    finish_line::approve(&id, None, false).unwrap();
+    let t = settle(&id);
+    assert_eq!(t.s("stage"), "done", "{}", t.at("failure"));
+    assert_eq!(read(&w.root.join("f.txt")), "v1\n");
+}
+
+#[test]
 fn a_commit_that_reaches_the_branch_while_it_is_being_merged_is_neither_merged_unseen_nor_deleted_as_merged() {
     let w = world_with(Opts { repo: true, settings: json!({ "review.when": "never" }), ..Default::default() });
     let id = to_approval(&w, "Work");

@@ -62,6 +62,9 @@ pub fn nobody_left(name: &str, skipped: &[String]) -> String { format!("{name}: 
 static LIMIT: LazyLock<fancy_regex::Regex> = LazyLock::new(|| fancy_regex::Regex::new(r"(?i)usage limit|usage_limit|(?<!rate.)(?<!rate)limit reached|hit your [\w ]*limit|\bquota\b|billing|credit balance|payment|out of (?:credits?|allowance)").unwrap());
 static NO_MODEL: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)not supported|unsupported|does not exist|may not exist|model[^\n]{0,40}not found|unknown (?:provider|model)").unwrap());
 fn clock(ms: i64) -> String { Local.timestamp_millis_opt(ms).single().map(|d| format!("{:02}:{:02}", d.hour(), d.minute())).unwrap_or_default() }
+/// What the provider said about the allowance itself, as opposed to an error that passes by itself. One reading, for
+/// the hand-over's words and for the record of each subscription (store/quota.rs) alike.
+pub fn out_of_allowance(words: &str) -> bool { LIMIT.is_match(words).unwrap_or(false) }
 /// When the allowance comes back, where the provider's words say so: "resets 5pm", "try again at 5:00 PM", "resets at
 /// 17:00", "try again in 3 hours 14 minutes", and the moment itself after a bar ("…|1760367600"). "" when they do not.
 pub fn reset_at(words: &str, now: i64) -> String {
@@ -89,7 +92,7 @@ pub fn reset_at(words: &str, now: i64) -> String {
 pub fn why_of(error: &str, auth: bool, passing: bool, reason: &str, tries: i64, now: i64) -> String {
     if auth { return "logged out".into(); }
     if passing { return format!("its {}{}", if reason.is_empty() { "provider failed" } else { reason }, if tries > 1 { format!(", still after {tries} tries") } else { String::new() }); }
-    if LIMIT.is_match(error).unwrap_or(false) { let at = reset_at(error, now); return format!("out of allowance{}", if at.is_empty() { at } else { format!(" until {at}") }); }
+    if out_of_allowance(error) { let at = reset_at(error, now); return format!("out of allowance{}", if at.is_empty() { at } else { format!(" until {at}") }); }
     if NO_MODEL.is_match(error) { return "its model is not available".into(); }
     let said = one_line(error, 120);
     let said = said.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
